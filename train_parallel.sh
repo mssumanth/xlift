@@ -13,18 +13,22 @@ set -euo pipefail
 
 STEPS="${1:-200}"
 
+# Interpreter (boxes often have python3 but no `python`); allow override via $PY
+PY="${PY:-$(command -v python3 || command -v python || true)}"
+if [ -z "$PY" ]; then echo "No python3/python on PATH"; exit 1; fi
+
 if [ ! -f results/cohorts/eval_set.json ]; then
-  echo "eval_set.json missing — run: python run_experiment.py --step data --shortcut"
+  echo "eval_set.json missing — run: $PY run_experiment.py --step data --shortcut"
   exit 1
 fi
 
 # Count visible GPUs
-NGPU=$(python -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 1)
+NGPU=$("$PY" -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 1)
 echo "Detected $NGPU GPU(s). Training 3 cohorts ($STEPS steps each)."
 mkdir -p results
 
 run() {  # run <gpu_id> <cohort>
-  CUDA_VISIBLE_DEVICES="$1" python run_experiment.py --step train --cohort "$2" --steps "$STEPS" \
+  CUDA_VISIBLE_DEVICES="$1" "$PY" run_experiment.py --step train --cohort "$2" --steps "$STEPS" \
     > "results/train_$2.log" 2>&1
 }
 
@@ -42,5 +46,5 @@ fi
 echo "All cohorts finished. Lift results:"
 for c in easy frontier hard; do
   printf "  %-9s " "$c"
-  python -c "import json;d=json.load(open('results/grpo/$c/lift_result.json'));print(f'baseline={d[\"baseline_accuracy\"]:.1%} post={d[\"post_training_accuracy\"]:.1%} lift={d[\"actual_lift\"]:+.1%}')" 2>/dev/null || echo "no result"
+  "$PY" -c "import json;d=json.load(open('results/grpo/$c/lift_result.json'));print(f'baseline={d[\"baseline_accuracy\"]:.1%} post={d[\"post_training_accuracy\"]:.1%} lift={d[\"actual_lift\"]:+.1%}')" 2>/dev/null || echo "no result"
 done

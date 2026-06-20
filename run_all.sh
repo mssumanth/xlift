@@ -18,6 +18,11 @@ GEPA_GENS="${GEPA_GENS:-3}"
 STEPS="${STEPS:-200}"
 export XLIFT_BACKEND="${XLIFT_BACKEND:-qwen}"
 
+# Interpreter (boxes often have python3 but no `python`)
+PY="$(command -v python3 || command -v python || true)"
+if [ -z "$PY" ]; then echo "No python3/python on PATH"; exit 1; fi
+export PY
+
 mkdir -p results/overnight
 RUN_LOG="results/overnight/run_$(date +%Y%m%d_%H%M%S).log"
 
@@ -30,14 +35,14 @@ nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader 2>&1 | tee 
 # --- Pre-flight: make sure cohorts + eval set exist ---
 if [ ! -f results/cohorts/eval_set.json ]; then
   log "Cohorts/eval_set missing — building them (step data)..."
-  python run_experiment.py --step data --shortcut >> "$RUN_LOG" 2>&1
+  "$PY" run_experiment.py --step data --shortcut >> "$RUN_LOG" 2>&1
 fi
 
 # --- STEP 2: metrics, one cohort at a time so a failure in one keeps the others ---
 log ">>> STEP 2: metrics"
 for c in frontier easy hard; do
   log "  metrics: $c cohort ..."
-  python run_experiment.py --step metrics --cohort "$c" \
+  "$PY" run_experiment.py --step metrics --cohort "$c" \
       --max-tasks "$MAX_TASKS" --rollouts "$ROLLOUTS" --gepa-gens "$GEPA_GENS" \
       >> "results/overnight/metrics_$c.log" 2>&1
   rc=$?
@@ -52,13 +57,13 @@ if [ $rc -eq 0 ]; then log "  training DONE"; else log "  training FAILED/partia
 
 # --- STEP 4: plots (only useful if at least metrics + some training landed) ---
 log ">>> STEP 4: visualize"
-python run_experiment.py --step visualize >> "results/overnight/visualize.log" 2>&1
+"$PY" run_experiment.py --step visualize >> "results/overnight/visualize.log" 2>&1
 rc=$?
 if [ $rc -eq 0 ]; then log "  plots DONE -> results/plots/"; else log "  visualize FAILED (rc=$rc) — see results/overnight/visualize.log"; fi
 
 # --- Morning summary ---
 log "================ SUMMARY ================"
-python run_experiment.py --step status 2>&1 | tee -a "$RUN_LOG" || true
+"$PY" run_experiment.py --step status 2>&1 | tee -a "$RUN_LOG" || true
 log "xLift scores:  results/xlift_scores/*.json"
 log "Train lifts:   results/grpo/*/lift_result.json"
 log "Plots:         results/plots/*.png"
