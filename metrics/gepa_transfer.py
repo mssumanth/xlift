@@ -115,14 +115,18 @@ async def compute_gepa_transfer_lift(
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
     # Configure DSPy default LM (used for forward passes during eval).
-    # 1024 tokens: MATH chain-of-thought often exceeds 512 and gets truncated,
-    # which drops the #### answer and tanks every score.
+    # max_tokens MUST be large: MATH chain-of-thought routinely exceeds 1024 and
+    # gets truncated mid-output. With dspy's JSON adapter a truncated response is
+    # unparseable, so the example errors out and scores 0 — which silently zeroed
+    # out GEPA transfer across every cohort. 4096 covers long solutions.
     fast_lm = dspy.LM(
         model=f"anthropic/{FAST_MODEL}",
         api_key=api_key,
-        max_tokens=1024,
+        max_tokens=4096,
     )
-    dspy.configure(lm=fast_lm)
+    # ChatAdapter parses field markers, not strict JSON, so a truncated response
+    # still yields a usable `answer` field instead of a hard parse failure.
+    dspy.configure(lm=fast_lm, adapter=dspy.ChatAdapter())
 
     # Split cohort
     sample = cohort[:max_tasks]
