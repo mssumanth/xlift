@@ -49,10 +49,18 @@ async def measure_task_pass_rate(task: dict, n_rollouts: int = 5) -> dict:
             correct += 1
 
     p = correct / n_rollouts
+    # Reachability = pass@k - pass@1. pass@1 is the per-sample success prob (= p);
+    # pass@k is 1 if ANY of the k rollouts passed. High reachability means the model
+    # CAN reach the answer but rarely — exactly the tasks RL sharpens. It separates
+    # "rare but reachable" (good to train) from "hopeless" (answer outside support).
+    pass_at_k = 1.0 if correct > 0 else 0.0
+    reachability = pass_at_k - p
     return {
         "task_id": task["id"],
         "pass_rate": p,
         "boundary_score": boundary_score(p),
+        "pass_at_k": pass_at_k,
+        "reachability": reachability,
         "n_rollouts": n_rollouts,
         "n_correct": correct,
         "predicted_answers": predicted_answers,
@@ -90,11 +98,13 @@ async def compute_cohort_boundary_score(
 
     scores = [r["boundary_score"] for r in task_results]
     pass_rates = [r["pass_rate"] for r in task_results]
+    reachabilities = [r["reachability"] for r in task_results]
     learnable = [r for r in task_results if r["in_learnable_zone"]]
 
     return {
         "mean_boundary_score": sum(scores) / len(scores),
         "mean_pass_rate": sum(pass_rates) / len(pass_rates),
+        "mean_reachability": sum(reachabilities) / len(reachabilities),
         "learnable_fraction": len(learnable) / len(task_results),
         "task_results": task_results,
         # Verdict distribution

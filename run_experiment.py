@@ -85,6 +85,13 @@ def step_metrics(args):
             print(f"Cohort '{name}' not found. Run --step data first.")
             continue
 
+        # Idempotency: skip cohorts already computed unless --force. Makes the
+        # overnight run resumable — a crash/restart won't recompute finished cohorts.
+        out_path = scores_dir / f"{name}.json"
+        if out_path.exists() and not args.force:
+            print(f"\n[skip] {name}: metrics already exist ({out_path}). Use --force to recompute.")
+            continue
+
         with open(path) as f:
             cohort = json.load(f)
 
@@ -124,6 +131,8 @@ def step_metrics(args):
         # Enrich with raw values for visualizer
         xlift["mean_pass_rate"]    = boundary["mean_pass_rate"]
         xlift["learnable_fraction"] = boundary["learnable_fraction"]
+        xlift["mean_reachability"]  = boundary.get("mean_reachability")
+        print(f"    Reachability (pass@k - pass@1): {boundary.get('mean_reachability', 0):+.3f}")
 
         # Save
         out_path = scores_dir / f"{name}.json"
@@ -206,12 +215,16 @@ if __name__ == "__main__":
     parser.add_argument("--smoke", action="store_true",
                         help="Tiny validation run (3 tasks, 2 rollouts, 1 GEPA gen). "
                              "Use first on a new box to confirm the backend works before the full run.")
+    parser.add_argument("--force", action="store_true",
+                        help="Recompute metrics even if a cohort's results already exist "
+                             "(default skips finished cohorts so runs are resumable).")
     args = parser.parse_args()
 
     if args.smoke:
         args.max_tasks = 3
         args.rollouts = 2
         args.gepa_gens = 1
+        args.force = True  # always recompute the tiny validation run
         if args.cohort == "all":
             args.cohort = "frontier"
         print(f"[smoke] tiny run: cohort={args.cohort}, max_tasks=3, rollouts=2, gepa_gens=1, "
