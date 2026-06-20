@@ -32,9 +32,11 @@ log "================ xLift overnight run ================"
 log "backend=$XLIFT_BACKEND  max_tasks=$MAX_TASKS  rollouts=$ROLLOUTS  gepa_gens=$GEPA_GENS  steps=$STEPS"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader 2>&1 | tee -a "$RUN_LOG" || true
 
-# --- Pre-flight: make sure cohorts + eval set exist ---
-if [ ! -f results/cohorts/eval_set.json ]; then
-  log "Cohorts/eval_set missing — building them (step data)..."
+# --- Pre-flight: make sure all 5 cohorts + eval set exist ---
+if [ ! -f results/cohorts/eval_set.json ] || \
+   [ ! -f results/cohorts/mixed.json ] || \
+   [ ! -f results/cohorts/weak_verifier.json ]; then
+  log "Cohorts missing or incomplete — building all 5 (step data)..."
   "$PY" run_experiment.py --step data --shortcut >> "$RUN_LOG" 2>&1
 fi
 
