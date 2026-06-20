@@ -37,10 +37,21 @@ class MathSolver(dspy.Module):
 
 
 def _math_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
-    """DSPy metric: correctness score + textual feedback for GEPA reflection."""
+    """DSPy/GEPA metric.
+
+    GEPA calls this in two modes:
+      - scoring pass  (pred_name is None) -> must return a plain float, because
+        dspy.Evaluate aggregates with sum(); returning a dict raises TypeError.
+      - feedback pass (pred_name set)     -> return dspy.Prediction(score, feedback)
+        so GEPA's reflection LM gets textual guidance.
+    """
     predicted = extract_answer(pred.answer)
     correct = bool(predicted and gold.answer and answers_match(predicted, gold.answer))
     score = 1.0 if correct else 0.0
+
+    if pred_name is None:
+        return score
+
     feedback = (
         "Correct!"
         if correct
@@ -50,7 +61,7 @@ def _math_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
             "writing #### <answer>."
         )
     )
-    return {"score": score, "feedback": feedback}
+    return dspy.Prediction(score=score, feedback=feedback)
 
 
 def _eval_pass_rate(program: dspy.Module, tasks: list[dict], max_tasks: int = 20) -> float:
@@ -103,11 +114,13 @@ async def compute_gepa_transfer_lift(
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
-    # Configure DSPy default LM (used for forward passes during eval)
+    # Configure DSPy default LM (used for forward passes during eval).
+    # 1024 tokens: MATH chain-of-thought often exceeds 512 and gets truncated,
+    # which drops the #### answer and tanks every score.
     fast_lm = dspy.LM(
         model=f"anthropic/{FAST_MODEL}",
         api_key=api_key,
-        max_tokens=512,
+        max_tokens=1024,
     )
     dspy.configure(lm=fast_lm)
 
