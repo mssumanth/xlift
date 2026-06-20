@@ -16,14 +16,21 @@ set -uo pipefail
 USE_VENV="${USE_VENV:-0}"
 INSTALL_VLLM="${INSTALL_VLLM:-0}"
 
+# Detect the Python interpreter (boxes often have python3 but no `python`).
+PY="$(command -v python3 || command -v python || true)"
+if [ -z "$PY" ]; then
+  echo "!! No python3/python found on PATH. Install Python first."; exit 1
+fi
+echo "==> Using interpreter: $PY ($($PY --version 2>&1))"
+
 if [ "$USE_VENV" = "1" ]; then
   echo "==> Creating isolated venv (.venv)"
-  python3 -m venv .venv
+  "$PY" -m venv .venv
   source .venv/bin/activate
+  PY=python   # inside the venv, `python` exists
 fi
 
-PY=python
-$PY -m pip install --upgrade pip >/dev/null
+"$PY" -m pip install --upgrade pip >/dev/null
 
 echo "==> Checking for preinstalled CUDA torch..."
 if $PY -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
@@ -39,6 +46,9 @@ echo "==> Installing Python requirements"
 # box's CUDA build) and drop vllm unless explicitly requested.
 TMP_REQ="$(mktemp)"
 grep -vE '^\s*#' requirements.txt | while IFS= read -r line; do
+  # strip inline comments and surrounding whitespace
+  line="$(echo "$line" | sed 's/[[:space:]]*#.*$//' | sed 's/[[:space:]]*$//;s/^[[:space:]]*//')"
+  [ -z "$line" ] && continue
   pkg_lower="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
   case "$pkg_lower" in
     torch*)  [ "$HAVE_TORCH" = "1" ] && continue ;;
