@@ -58,7 +58,7 @@ def assemble_table(cfg) -> pd.DataFrame:
 
     rows = []
     for name, m in metrics_map.items():
-        e = eval_map.get(name, {})
+        e = eval_map.get(name, {})   # empty dict if GRPO not yet run — lift cols will be None
         gn = gradnorm_map.get(name)
         row = {
             "name": name,
