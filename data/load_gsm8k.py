@@ -3,7 +3,7 @@ Load GSM8K and partition into three cohorts based on model pass rates.
 
 Cohort 1 — Too Easy:      pass rate > 0.80  (model already knows this)
 Cohort 2 — Learnable:     pass rate 0.30-0.70 (the sweet spot for RL)
-Cohort 3 — Too Hard:      pass rate < 0.15  (model cannot learn from this yet)
+Cohort 3 — Too H, l from this yet)
 """
 
 import re
@@ -12,6 +12,14 @@ import random
 import os
 from pathlib import Path
 from typing import Optional
+
+# --- Use macOS system keychain for SSL (handles corporate TLS-intercepting proxies) ---
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 from datasets import load_dataset
 from tqdm import tqdm
 
@@ -29,6 +37,28 @@ def extract_answer(text: str) -> Optional[str]:
     return numbers[-1] if numbers else None
 
 
+def extract_boxed_answer(solution: str) -> Optional[str]:
+    """Pull the final answer from a MATH solution's \\boxed{...} (handles nested braces)."""
+    idx = solution.rfind(r"\boxed")
+    if idx == -1:
+        return None
+    i = idx + len(r"\boxed")
+    while i < len(solution) and solution[i] != "{":
+        i += 1
+    if i >= len(solution):
+        return None
+    depth = 0
+    start = i + 1
+    for j in range(i, len(solution)):
+        if solution[j] == "{":
+            depth += 1
+        elif solution[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return solution[start:j].strip()
+    return None
+
+
 def answers_match(predicted: str, ground_truth: str) -> bool:
     """Check if two answer strings represent the same number."""
     try:
@@ -40,7 +70,7 @@ def answers_match(predicted: str, ground_truth: str) -> bool:
 def load_gsm8k(split: str = "train", max_tasks: int = 2000) -> list[dict]:
     """Load GSM8K tasks as flat dicts."""
     print(f"Loading GSM8K ({split})...")
-    ds = load_dataset("gsm8k", "main", split=split)
+    ds = load_dataset("openai/gsm8k", "main", split=split)
     tasks = []
     for i, item in enumerate(ds):
         if i >= max_tasks:
@@ -163,17 +193,30 @@ def use_difficulty_labels_shortcut(max_per_cohort: int = 150) -> dict[str, list[
     Level 4-5 → Hard
     """
     print("Loading MATH dataset with pre-labelled difficulty...")
-    ds = load_dataset("hendrycks/competition_math", split="train", trust_remote_code=True)
+    # qwedsacf/competition_math is a parquet mirror (no loading script) with fields:
+    # problem, solution, level ("Level 1".."Level 5"), type
+    ds = load_dataset("qwedsacf/competition_math", split="train")
 
     easy, frontier, hard = [], [], []
 
     for i, item in enumerate(ds):
-        level = int(item.get("level", "Level 3").replace("Level ", ""))
+        # Level can occasionally be malformed (e.g. "Level ?") — default to 3
+        level_str = str(item.get("level", "Level 3")).replace("Level ", "").strip()
+        try:
+            level = int(level_str)
+        except ValueError:
+            continue  # skip unlabelled problems
+        if not 1 <= level <= 5:
+            continue
+        final_answer = extract_boxed_answer(item["solution"])
+        if final_answer is None:
+            continue  # need a checkable final answer for downstream metrics
         task = {
             "id": i,
             "question": item["problem"],
-            "answer": item["solution"],
+            "answer": final_answer,
             "answer_full": item["solution"],
+            "level": level,
             "pass_rate": [0.9, 0.75, 0.5, 0.2, 0.05][level - 1],
         }
         if level <= 2:
