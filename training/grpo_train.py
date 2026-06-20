@@ -1,14 +1,16 @@
 """
 GRPO training script — train one cohort, measure accuracy lift.
 
-Run once per cohort:
-  python training/grpo_train.py --cohort frontier --output results/grpo/frontier
+Run once per cohort (sequential on 1 GPU):
+  python run_experiment.py --step train --cohort frontier
 
-Requires: 8x H100s, ~60-90 minutes per cohort for Qwen2.5-0.5B
+Or all three in parallel on a multi-GPU box:
+  bash train_parallel.sh
+
+Default model Qwen2.5-1.5B-Instruct: ~45-75 min/cohort on one H100.
 """
 
 import os
-import re
 import json
 import argparse
 from pathlib import Path
@@ -16,23 +18,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_MODEL   = os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
+# Reuse the LaTeX-aware extraction/matching from the data module so training,
+# eval, and the metrics all score answers identically (critical for MATH).
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from data.load_gsm8k import extract_answer, answers_match  # noqa: E402
+
+BASE_MODEL   = os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
 RESULTS_DIR  = Path(os.environ.get("RESULTS_DIR", "./results"))
-
-
-def extract_answer(text: str):
-    match = re.search(r"####\s*([\-\d,\.]+)", text)
-    if match:
-        return match.group(1).replace(",", "").strip()
-    numbers = re.findall(r"[\-\d]+\.?\d*", text)
-    return numbers[-1] if numbers else None
-
-
-def answers_match(pred: str, gold: str) -> bool:
-    try:
-        return abs(float(pred) - float(gold)) < 1e-4
-    except (ValueError, TypeError):
-        return pred.strip() == gold.strip()
 
 
 def build_reward_fn(correct_answer: str):
@@ -63,8 +56,8 @@ def evaluate_accuracy(model, tokenizer, tasks: list[dict], n_samples: int = 100)
             outputs = model.generate(
                 **inputs,
                 max_new_tokens=512,
-                temperature=0.0,
                 do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
             )
         text = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
         pred = extract_answer(text)
@@ -91,20 +84,16 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
     with open(cohort_path) as f:
         cohort = json.load(f)
 
-    # Load eval set (held-out GSM8K test split)
+    # Load held-out MATH eval set (created once by the data step, same distribution
+    # as the cohorts). No GSM8K — training and eval must be the same domain.
     eval_path = RESULTS_DIR / "cohorts" / "eval_set.json"
-    if eval_path.exists():
-        with open(eval_path) as f:
-            eval_tasks = json.load(f)
-    else:
-        from datasets import load_dataset
-        gsm_test = load_dataset("gsm8k", "main", split="test")
-        eval_tasks = [
-            {"id": i, "question": item["question"], "answer": extract_answer(item["answer"])}
-            for i, item in enumerate(gsm_test)
-        ]
-        with open(eval_path, "w") as f:
-            json.dump(eval_tasks, f)
+    if not eval_path.exists():
+        raise FileNotFoundError(
+            f"Eval set not found: {eval_path}. Run "
+            f"`python run_experiment.py --step data --shortcut` first."
+        )
+    with open(eval_path) as f:
+        eval_tasks = json.load(f)
 
     print(f"\nLoading model: {BASE_MODEL}")
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)

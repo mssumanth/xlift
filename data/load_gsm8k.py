@@ -279,14 +279,27 @@ def use_difficulty_labels_shortcut(max_per_cohort: int = 150) -> dict[str, list[
         else:
             hard.append(task)
 
+    # Hold out a disjoint eval set FIRST (mixed difficulty) so training lift is
+    # measured on unseen MATH problems from the same distribution — never GSM8K.
+    eval_per_level = max_per_cohort // 3  # ~50 each bucket by default
+    random.shuffle(easy); random.shuffle(frontier); random.shuffle(hard)
+    eval_set = easy[:eval_per_level] + frontier[:eval_per_level] + hard[:eval_per_level]
+    easy, frontier, hard = easy[eval_per_level:], frontier[eval_per_level:], hard[eval_per_level:]
+
     cohorts = {
         "easy":     random.sample(easy,     min(max_per_cohort, len(easy))),
         "frontier": random.sample(frontier, min(max_per_cohort, len(frontier))),
         "hard":     random.sample(hard,     min(max_per_cohort, len(hard))),
     }
 
-    print(f"Easy: {len(cohorts['easy'])}  Frontier: {len(cohorts['frontier'])}  Hard: {len(cohorts['hard'])}")
+    print(f"Easy: {len(cohorts['easy'])}  Frontier: {len(cohorts['frontier'])}  "
+          f"Hard: {len(cohorts['hard'])}  Eval(held-out): {len(eval_set)}")
     save_cohorts(cohorts)
+    # Save the held-out eval set once, here (single process — no parallel race)
+    COHORT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(COHORT_DIR / "eval_set.json", "w") as f:
+        json.dump(eval_set, f, indent=2)
+    print(f"Saved {len(eval_set)} held-out eval tasks → {COHORT_DIR / 'eval_set.json'}")
     return cohorts
 
 
