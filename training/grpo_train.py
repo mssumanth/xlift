@@ -40,12 +40,15 @@ def build_reward_fn(correct_answer: str):
     return reward
 
 
-def evaluate_accuracy(model, tokenizer, tasks: list[dict], n_samples: int = 100) -> float:
-    """Measure model accuracy on a set of tasks."""
+def evaluate_per_item(model, tokenizer, tasks: list[dict], n_samples: int = 200) -> list[int]:
+    """Greedy-decode each task; return a 0/1 correctness list (one per task).
+
+    Per-item results (not just the mean) let us bootstrap a paired CI on the lift,
+    so we can tell a real gain from eval noise (Anish BUILDLOG P10).
+    """
     import torch
     sample = tasks[:n_samples]
-    correct = 0
-
+    flags = []
     for task in sample:
         prompt = (
             f"Solve this math problem. Show reasoning, then write your final answer as #### <number>.\n\n"
@@ -61,10 +64,31 @@ def evaluate_accuracy(model, tokenizer, tasks: list[dict], n_samples: int = 100)
             )
         text = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
         pred = extract_answer(text)
-        if pred and task["answer"] and answers_match(pred, task["answer"]):
-            correct += 1
+        flags.append(1 if (pred and task["answer"] and answers_match(pred, task["answer"])) else 0)
+    return flags
 
-    return correct / len(sample)
+
+def evaluate_accuracy(model, tokenizer, tasks: list[dict], n_samples: int = 100) -> float:
+    """Mean accuracy convenience wrapper over evaluate_per_item."""
+    flags = evaluate_per_item(model, tokenizer, tasks, n_samples=n_samples)
+    return sum(flags) / len(flags) if flags else 0.0
+
+
+def bootstrap_lift_ci(baseline_flags, post_flags, n_boot: int = 2000, seed: int = 0):
+    """Paired bootstrap CI for (post - baseline) accuracy over the same test items."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    b = np.asarray(baseline_flags, dtype=float)
+    p = np.asarray(post_flags, dtype=float)
+    n = len(b)
+    if n == 0:
+        return 0.0, 0.0, 0.0
+    diffs = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, n)
+        diffs.append(p[idx].mean() - b[idx].mean())
+    lo, hi = np.percentile(diffs, [2.5, 97.5])
+    return float(np.mean(diffs)), float(lo), float(hi)
 
 
 def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
@@ -102,10 +126,16 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Baseline accuracy BEFORE training
+    # Held-out test set (disjoint from the training cohort by construction).
+    # Use the full eval set for a tighter estimate; the same items are scored
+    # before and after so the lift CI is paired.
+    test_tasks = eval_tasks[:200]
+
+    # Baseline accuracy BEFORE training (per-item, for the paired bootstrap)
     print("Measuring baseline accuracy...")
-    baseline_acc = evaluate_accuracy(model, tokenizer, eval_tasks, n_samples=100)
-    print(f"Baseline accuracy: {baseline_acc:.1%}")
+    baseline_flags = evaluate_per_item(model, tokenizer, test_tasks, n_samples=len(test_tasks))
+    baseline_acc = sum(baseline_flags) / len(baseline_flags)
+    print(f"Baseline accuracy: {baseline_acc:.1%} (n={len(baseline_flags)})")
 
     # Build GRPO dataset
     def format_prompt(task):
@@ -165,10 +195,15 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
     print(f"\nTraining on {cohort_name} cohort ({len(cohort)} tasks, {max_steps} steps)...")
     trainer.train()
 
-    # Accuracy AFTER training
+    # Accuracy AFTER training — same test items, for a paired comparison
     print("\nMeasuring post-training accuracy...")
-    post_acc = evaluate_accuracy(model, tokenizer, eval_tasks, n_samples=100)
+    post_flags = evaluate_per_item(model, tokenizer, test_tasks, n_samples=len(test_tasks))
+    post_acc = sum(post_flags) / len(post_flags)
     lift = post_acc - baseline_acc
+
+    # Bootstrap CI so we can separate real lift from eval noise
+    _, ci_low, ci_high = bootstrap_lift_ci(baseline_flags, post_flags)
+    significant = ci_low > 0  # 95% CI excludes zero
 
     result = {
         "cohort": cohort_name,
@@ -176,6 +211,10 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
         "baseline_accuracy": round(baseline_acc, 4),
         "post_training_accuracy": round(post_acc, 4),
         "actual_lift": round(lift, 4),
+        "lift_ci_low": round(ci_low, 4),
+        "lift_ci_high": round(ci_high, 4),
+        "lift_significant": bool(significant),
+        "eval_n": len(test_tasks),
         "max_steps": max_steps,
         "cohort_size": len(cohort),
     }
@@ -188,7 +227,8 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
     print(f"Cohort: {cohort_name}")
     print(f"Baseline:  {baseline_acc:.1%}")
     print(f"Post-train:{post_acc:.1%}")
-    print(f"Lift:      {lift:+.1%}")
+    print(f"Lift:      {lift:+.1%}  95% CI [{ci_low:+.1%}, {ci_high:+.1%}]"
+          f"  {'SIGNIFICANT' if significant else '(within noise)'}")
     print(f"Saved → {result_path}")
 
     return result
