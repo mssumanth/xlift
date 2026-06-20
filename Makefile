@@ -85,6 +85,11 @@ status:
 test:
 	$(PYTHON) -m pytest tests/ -v --tb=short
 
+# Flat-pipeline tests only — pure logic + fake-backend CPU end-to-end.
+# No GPU, no API, no network, no pytest required.
+test-flat:
+	$(PYTHON) tests/test_flat_logic.py && $(PYTHON) tests/test_flat_e2e.py
+
 clean:
 	@echo "Remove artifacts? This deletes all rollouts, metrics, and training outputs."
 	@echo "Run: rm -rf artifacts/ results/"
