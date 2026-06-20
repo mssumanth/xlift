@@ -1,0 +1,43 @@
+[project]
+name = "xlift"
+version = "0.1.0"
+description = "Predict post-RL training lift from cheap, training-free learnability signals (BoundaryScore, Reachability, RepairGain, GEPA Transfer, Reward-Trust), validated against GRPO."
+requires-python = ">=3.9"
+readme = "CLAUDE.md"
+
+# Runtime deps. Heavy GPU/ML deps (torch, vllm) are intentionally NOT pinned hard
+# here so the box's preinstalled CUDA build is kept; setup.sh installs from
+# requirements.txt with torch/vllm filtering. This list mirrors requirements.txt.
+dependencies = [
+    "anthropic>=0.40.0",
+    "dspy>=2.6.0",
+    "datasets>=2.20.0",
+    "transformers>=4.45.0",
+    "trl>=0.15.0",
+    "accelerate>=0.34.0",
+    "peft>=0.13.0",
+    "sentence-transformers>=3.0.0",
+    "scikit-learn>=1.5.0",
+    "scipy>=1.14.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.9.0",
+    "typer>=0.12.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.1",
+    "tqdm>=4.66.0",
+    "truststore>=0.9.0",
+]
+
+[project.optional-dependencies]
+# GPU rollout/training stack — install on the H100 box (see setup.sh / requirements.txt)
+gpu = ["torch>=2.4.0", "vllm>=0.6.0"]
+# Test/dev tooling (CPU only — no GPU needed)
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+include = ["metrics*", "models*", "data*", "training*", "eval*", "prompts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
