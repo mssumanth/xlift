@@ -37,20 +37,10 @@ class MathSolver(dspy.Module):
 
 
 def _math_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
-    """DSPy metric: correctness score + textual feedback for GEPA reflection."""
+    """DSPy metric: return float score (GEPA evaluator sums these, so must be numeric)."""
     predicted = extract_answer(pred.answer)
     correct = bool(predicted and gold.answer and answers_match(predicted, gold.answer))
-    score = 1.0 if correct else 0.0
-    feedback = (
-        "Correct!"
-        if correct
-        else (
-            f"Got '{predicted or 'no number extracted'}' but expected '{gold.answer}'. "
-            "Show each arithmetic step explicitly and verify the final number before "
-            "writing #### <answer>."
-        )
-    )
-    return {"score": score, "feedback": feedback}
+    return 1.0 if correct else 0.0
 
 
 def _eval_pass_rate(program: dspy.Module, tasks: list[dict], max_tasks: int = 20) -> float:
