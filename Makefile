@@ -90,6 +90,13 @@ test:
 test-flat:
 	$(PYTHON) tests/test_flat_logic.py && $(PYTHON) tests/test_flat_e2e.py
 
+# Self-contained HTML results dashboard -> results/dashboard.html
+dashboard:
+	$(PYTHON) eval/dashboard.py
+
+dashboard-demo:
+	$(PYTHON) eval/dashboard.py --demo --open
+
 clean:
 	@echo "Remove artifacts? This deletes all rollouts, metrics, and training outputs."
 	@echo "Run: rm -rf artifacts/ results/"

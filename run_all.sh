@@ -61,6 +61,12 @@ log ">>> STEP 4: visualize"
 rc=$?
 if [ $rc -eq 0 ]; then log "  plots DONE -> results/plots/"; else log "  visualize FAILED (rc=$rc) — see results/overnight/visualize.log"; fi
 
+# --- Dashboard (self-contained HTML, always safe to build) ---
+log ">>> Building dashboard"
+"$PY" eval/dashboard.py >> "results/overnight/dashboard.log" 2>&1 \
+  && log "  dashboard DONE -> results/dashboard.html" \
+  || log "  dashboard FAILED — see results/overnight/dashboard.log"
+
 # --- Morning summary ---
 log "================ SUMMARY ================"
 "$PY" run_experiment.py --step status 2>&1 | tee -a "$RUN_LOG" || true
