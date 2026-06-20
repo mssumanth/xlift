@@ -199,13 +199,24 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200,
                 rewards.append(1.0 if correct else 0.0)
             return rewards
 
-    trainer = GRPOTrainer(
-        model=model,
-        reward_funcs=reward_fn,
-        args=config,
-        train_dataset=hf_dataset,
-        tokenizer=tokenizer,
-    )
+    # TRL renamed `tokenizer` -> `processing_class` (0.11+); newest versions reject
+    # `tokenizer=`. Try the new kwarg, fall back to the old one for older TRL.
+    try:
+        trainer = GRPOTrainer(
+            model=model,
+            reward_funcs=reward_fn,
+            args=config,
+            train_dataset=hf_dataset,
+            processing_class=tokenizer,
+        )
+    except TypeError:
+        trainer = GRPOTrainer(
+            model=model,
+            reward_funcs=reward_fn,
+            args=config,
+            train_dataset=hf_dataset,
+            tokenizer=tokenizer,
+        )
 
     print(f"\nTraining on {cohort_name} cohort ({len(cohort)} tasks, {max_steps} steps)...")
     trainer.train()
