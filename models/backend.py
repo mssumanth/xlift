@@ -93,7 +93,7 @@ class _QwenEngine:
         self._tokenizer.padding_side = "left"  # decoder-only generation
         self._model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             device_map="auto",
         )
         self._model.eval()
