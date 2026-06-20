@@ -1,0 +1,131 @@
+"""
+BoundaryScore — measures whether tasks sit in the learnable zone.
+
+Formula: BoundaryScore(T) = 4 * p * (1 - p)
+  where p = pass rate of the model on task T across N rollouts
+
+Peaks at 1.0 when p = 0.5 (model is right half the time — perfect training task)
+Falls to 0.0 at p = 0 (always wrong) or p = 1 (always right — already mastered)
+"""
+
+import os
+import re
+import asyncio
+import anthropic
+from tqdm import tqdm
+from data.load_gsm8k import extract_answer, answers_match
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MODEL = "claude-haiku-4-5-20251001"
+
+def _get_client():
+    return anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+
+
+def boundary_score(p: float) -> float:
+    """The core formula. p is pass rate 0-1."""
+    return 4 * p * (1 - p)
+
+
+async def _solve_once(question: str) -> str:
+    """Run model on task once, return raw response text."""
+    from prompts.metrics import SOLVE_PROMPT
+    resp = await _get_client().messages.create(
+        model=MODEL,
+        max_tokens=512,
+        messages=[{"role": "user", "content": SOLVE_PROMPT.format(question=question)}],
+    )
+    return resp.content[0].text
+
+
+async def measure_task_pass_rate(task: dict, n_rollouts: int = 5) -> dict:
+    """Run model N times on a task and compute pass rate + boundary score."""
+    results = await asyncio.gather(*[_solve_once(task["question"]) for _ in range(n_rollouts)])
+
+    correct = 0
+    predicted_answers = []
+    for text in results:
+        pred = extract_answer(text)
+        predicted_answers.append(pred)
+        if pred and task["answer"] and answers_match(pred, task["answer"]):
+            correct += 1
+
+    p = correct / n_rollouts
+    return {
+        "task_id": task["id"],
+        "pass_rate": p,
+        "boundary_score": boundary_score(p),
+        "n_rollouts": n_rollouts,
+        "n_correct": correct,
+        "predicted_answers": predicted_answers,
+        # BoundaryScore interpretation
+        "in_learnable_zone": 0.30 <= p <= 0.70,
+        "verdict": (
+            "mastered"   if p > 0.80 else
+            "learnable"  if p >= 0.30 else
+            "too_hard"
+        ),
+    }
+
+
+async def compute_cohort_boundary_score(
+    cohort: list[dict],
+    n_rollouts: int = 5,
+    max_tasks: int = 50,
+) -> dict:
+    """
+    Compute BoundaryScore for a cohort of tasks.
+    Returns dataset-level aggregates.
+    """
+    sample = cohort[:max_tasks]
+
+    print(f"  Computing BoundaryScore on {len(sample)} tasks ({n_rollouts} rollouts each)...")
+    task_results = []
+    # Process in batches to avoid rate limits
+    batch_size = 10
+    for i in range(0, len(sample), batch_size):
+        batch = sample[i:i + batch_size]
+        batch_results = await asyncio.gather(*[
+            measure_task_pass_rate(t, n_rollouts) for t in batch
+        ])
+        task_results.extend(batch_results)
+
+    scores = [r["boundary_score"] for r in task_results]
+    pass_rates = [r["pass_rate"] for r in task_results]
+    learnable = [r for r in task_results if r["in_learnable_zone"]]
+
+    return {
+        "mean_boundary_score": sum(scores) / len(scores),
+        "mean_pass_rate": sum(pass_rates) / len(pass_rates),
+        "learnable_fraction": len(learnable) / len(task_results),
+        "task_results": task_results,
+        # Verdict distribution
+        "n_mastered":  sum(1 for r in task_results if r["verdict"] == "mastered"),
+        "n_learnable": sum(1 for r in task_results if r["verdict"] == "learnable"),
+        "n_too_hard":  sum(1 for r in task_results if r["verdict"] == "too_hard"),
+    }
+
+
+if __name__ == "__main__":
+    import json
+    from pathlib import Path
+
+    cohort_dir = Path(__file__).parent.parent / "results" / "cohorts"
+    for name in ["easy", "frontier", "hard"]:
+        path = cohort_dir / f"{name}.json"
+        if not path.exists():
+            print(f"Cohort {name} not found. Run data/load_gsm8k.py first.")
+            continue
+
+        with open(path) as f:
+            cohort = json.load(f)
+
+        print(f"\n=== {name.upper()} cohort ===")
+        result = asyncio.run(compute_cohort_boundary_score(cohort, n_rollouts=5, max_tasks=30))
+        print(f"  Mean BoundaryScore: {result['mean_boundary_score']:.3f}")
+        print(f"  Mean pass rate:     {result['mean_pass_rate']:.3f}")
+        print(f"  Learnable fraction: {result['learnable_fraction']:.1%}")
+        print(f"  Mastered / Learnable / Too hard: "
+              f"{result['n_mastered']} / {result['n_learnable']} / {result['n_too_hard']}")
