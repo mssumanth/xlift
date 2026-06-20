@@ -1,13 +1,13 @@
 """
-GEPA Transfer Lift — the differentiating signal.
+GEPA Transfer Lift — uses dspy.GEPA (Reflective Prompt Evolution).
 
 Does learning from one set of tasks transfer to completely unseen tasks?
 
 Steps:
 1. Split cohort 50/50 into probe set and transfer set
-2. Run GEPA loop on probe set — evolve prompt strategies, extract the best lesson
-3. Apply that lesson to the transfer set (tasks the model has never seen)
-4. GEPA Transfer Lift = pass rate with lesson - pass rate without lesson
+2. Run dspy.GEPA on probe set — evolves the solver's instructions via LM reflection
+3. Apply optimized program to transfer set (tasks the model has never seen)
+4. GEPA Transfer Lift = pass rate with optimized program - baseline pass rate
 
 High Transfer Lift → the cohort teaches reusable reasoning patterns → worth training on
 Low Transfer Lift  → the cohort is redundant or overfit → diversify before training
@@ -16,15 +16,9 @@ Low Transfer Lift  → the cohort is redundant or overfit → diversify before t
 import os
 import asyncio
 import random
-import anthropic
-from metrics._throttle import acreate
+import dspy
+from dspy.teleprompt import GEPA
 from data.load_gsm8k import extract_answer, answers_match
-from prompts.metrics import (
-    SOLVE_PROMPT,
-    SOLVE_WITH_STRATEGY_PROMPT,
-    GEPA_REFLECT_PROMPT,
-    GEPA_MUTATE_PROMPT,
-)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -32,140 +26,66 @@ load_dotenv()
 FAST_MODEL  = "claude-haiku-4-5-20251001"
 THINK_MODEL = "claude-sonnet-4-6"
 
-def _get_client():
-    return anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+
+class MathSolver(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.predictor = dspy.ChainOfThought("question -> answer")
+
+    def forward(self, question):
+        return self.predictor(question=question)
 
 
-async def _solve(question: str, strategy: str | None = None) -> str:
-    """Base model solves the task (optionally under a GEPA-evolved strategy)."""
-    from models.backend import generate
-    if strategy:
-        prompt = SOLVE_WITH_STRATEGY_PROMPT.format(strategy=strategy, question=question)
-    else:
-        prompt = SOLVE_PROMPT.format(question=question)
-    return await generate(prompt, max_tokens=1024, temperature=0.8)
-
-
-async def _pass_rate(tasks: list[dict], strategy: str | None, n_rollouts: int = 4) -> float:
-    """Run strategy on all tasks, return fraction correct."""
-    all_correct = []
-    batch_size = 8
-    for i in range(0, len(tasks), batch_size):
-        batch = tasks[i:i + batch_size]
-        responses = await asyncio.gather(*[
-            _solve(t["question"], strategy) for t in batch for _ in range(n_rollouts)
-        ])
-        for j, task in enumerate(batch):
-            task_responses = responses[j * n_rollouts:(j + 1) * n_rollouts]
-            correct = sum(
-                1 for text in task_responses
-                if (pred := extract_answer(text)) and task["answer"]
-                and answers_match(pred, task["answer"])
-            )
-            all_correct.append(correct / n_rollouts)
-    return sum(all_correct) / len(all_correct) if all_correct else 0.0
-
-
-async def _reflect_on_failures(tasks: list[dict], strategy: str | None) -> str:
-    """Run tasks and collect failures, then reflect to extract a lesson."""
-    failures = []
-    for task in tasks[:15]:  # sample for reflection
-        text = await _solve(task["question"], strategy)
-        pred = extract_answer(text)
-        if not (pred and task["answer"] and answers_match(pred, task["answer"])):
-            failures.append({
-                "question": task["question"][:200],
-                "model_answer": pred or "none",
-                "correct_answer": task["answer"],
-            })
-
-    if not failures:
-        return strategy or "Think step by step."
-
-    failure_text = "\n".join(
-        f"Q: {f['question']}\nModel said: {f['model_answer']} | Correct: {f['correct_answer']}"
-        for f in failures[:8]
+def _math_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+    """DSPy metric: correctness score + textual feedback for GEPA reflection."""
+    predicted = extract_answer(pred.answer)
+    correct = bool(predicted and gold.answer and answers_match(predicted, gold.answer))
+    score = 1.0 if correct else 0.0
+    feedback = (
+        "Correct!"
+        if correct
+        else (
+            f"Got '{predicted or 'no number extracted'}' but expected '{gold.answer}'. "
+            "Show each arithmetic step explicitly and verify the final number before "
+            "writing #### <answer>."
+        )
     )
+    return {"score": score, "feedback": feedback}
 
-    resp = await acreate(
-        model=THINK_MODEL,
-        max_tokens=256,
-        messages=[{"role": "user", "content": GEPA_REFLECT_PROMPT.format(failures=failure_text)}],
+
+def _eval_pass_rate(program: dspy.Module, tasks: list[dict], max_tasks: int = 20) -> float:
+    """Single-shot pass rate of a DSPy program on a task list."""
+    sample = tasks[:max_tasks]
+    if not sample:
+        return 0.0
+    correct = 0
+    for task in sample:
+        try:
+            pred = program(question=task["question"])
+            predicted = extract_answer(pred.answer)
+            if predicted and task["answer"] and answers_match(predicted, task["answer"]):
+                correct += 1
+        except Exception:
+            pass
+    return correct / len(sample)
+
+
+def _run_gepa(student, trainset, generations):
+    """Synchronous GEPA compile — called inside run_in_executor."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    think_lm = dspy.LM(
+        model=f"anthropic/{THINK_MODEL}",
+        api_key=api_key,
+        temperature=1.0,
+        max_tokens=4096,
     )
-    return resp.content[0].text.strip()
-
-
-async def _mutate_strategy(strategy: str, pass_rate: float, failure_pattern: str) -> list[str]:
-    """Generate 3 evolved prompt strategies."""
-    resp = await acreate(
-        model=THINK_MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": GEPA_MUTATE_PROMPT.format(
-            strategy=strategy,
-            pass_rate=pass_rate,
-            failure_pattern=failure_pattern,
-        )}],
+    optimizer = GEPA(
+        metric=_math_metric,
+        reflection_lm=think_lm,
+        max_full_evals=max(2, generations),
+        track_stats=True,
     )
-    lines = resp.content[0].text.strip().split("\n")
-    strategies = []
-    for line in lines:
-        line = line.strip()
-        if line and line[0].isdigit() and "." in line[:3]:
-            strategies.append(line.split(".", 1)[1].strip())
-        elif line and not line[0].isdigit():
-            strategies.append(line)
-    return strategies[:3] if strategies else [strategy]
-
-
-async def run_gepa_on_probe(
-    probe_tasks: list[dict],
-    generations: int = 3,
-    n_rollouts: int = 4,
-) -> dict:
-    """
-    Run GEPA evolutionary loop on the probe set.
-    Returns the best strategy and its probe pass rate.
-    """
-    current_strategy = "Think step by step and solve carefully."
-    current_score = await _pass_rate(probe_tasks[:20], current_strategy, n_rollouts)
-
-    population = [{"strategy": current_strategy, "score": current_score}]
-    generation_log = [{"gen": 0, "best_score": current_score, "strategy": current_strategy}]
-
-    for gen in range(generations):
-        print(f"    GEPA generation {gen + 1}/{generations} — current best: {current_score:.2%}")
-
-        # Reflect on failures
-        failure_lesson = await _reflect_on_failures(probe_tasks[:15], current_strategy)
-
-        # Mutate
-        new_strategies = await _mutate_strategy(current_strategy, current_score, failure_lesson)
-
-        # Evaluate new strategies in parallel
-        scores = await asyncio.gather(*[
-            _pass_rate(probe_tasks[:20], s, n_rollouts) for s in new_strategies
-        ])
-
-        for s, sc in zip(new_strategies, scores):
-            population.append({"strategy": s, "score": sc})
-
-        # Select best
-        population = sorted(population, key=lambda x: x["score"], reverse=True)[:3]
-        current_strategy = population[0]["strategy"]
-        current_score = population[0]["score"]
-
-        generation_log.append({
-            "gen": gen + 1,
-            "best_score": current_score,
-            "strategy": current_strategy,
-            "lesson": failure_lesson,
-        })
-
-    return {
-        "best_strategy": current_strategy,
-        "probe_pass_rate": current_score,
-        "generation_log": generation_log,
-    }
+    return optimizer.compile(student, trainset=trainset)
 
 
 async def compute_gepa_transfer_lift(
@@ -175,10 +95,23 @@ async def compute_gepa_transfer_lift(
     max_tasks: int = 60,
 ) -> dict:
     """
-    Full GEPA Transfer Lift computation for a cohort.
+    Full GEPA Transfer Lift computation using dspy.GEPA.
 
-    Split → GEPA on probe → apply lesson to transfer → measure lift
+    Splits the cohort, runs dspy.GEPA.compile() on the probe half to discover
+    an optimised reasoning instruction, then measures how well that instruction
+    transfers to the unseen transfer half.
     """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    # Configure DSPy default LM (used for forward passes during eval)
+    fast_lm = dspy.LM(
+        model=f"anthropic/{FAST_MODEL}",
+        api_key=api_key,
+        max_tokens=512,
+    )
+    dspy.configure(lm=fast_lm)
+
+    # Split cohort
     sample = cohort[:max_tasks]
     random.shuffle(sample)
     mid = len(sample) // 2
@@ -187,39 +120,69 @@ async def compute_gepa_transfer_lift(
 
     print(f"  Probe: {len(probe_tasks)} tasks | Transfer: {len(transfer_tasks)} tasks")
 
-    # Baseline on transfer set (no GEPA strategy)
-    print("  Measuring baseline on transfer set...")
-    baseline_transfer = await _pass_rate(transfer_tasks[:20], None, n_rollouts)
+    student = MathSolver()
 
-    # Run GEPA on probe set
-    print("  Running GEPA on probe set...")
-    gepa_result = await run_gepa_on_probe(probe_tasks, generations, n_rollouts)
+    # Baseline pass rates (unoptimised program)
+    print("  Measuring baseline pass rates...")
+    eval_n = min(20, len(probe_tasks))
+    baseline_probe    = _eval_pass_rate(student, probe_tasks,    max_tasks=eval_n)
+    baseline_transfer = _eval_pass_rate(student, transfer_tasks, max_tasks=eval_n)
 
-    best_strategy = gepa_result["best_strategy"]
+    # Build DSPy trainset from probe tasks
+    trainset = [
+        dspy.Example(question=t["question"], answer=t["answer"]).with_inputs("question")
+        for t in probe_tasks
+    ]
 
-    # Apply best strategy to transfer set
-    print("  Applying learned strategy to transfer set...")
-    transfer_with_strategy = await _pass_rate(transfer_tasks[:20], best_strategy, n_rollouts)
-
-    gepa_transfer_lift = transfer_with_strategy - baseline_transfer
-    gepa_train_lift    = gepa_result["probe_pass_rate"] - (
-        gepa_result["generation_log"][0]["best_score"]
+    # Run dspy.GEPA in a thread so we don't block the event loop
+    print(f"  Running dspy.GEPA on probe set ({generations} eval budgets)...")
+    loop = asyncio.get_event_loop()
+    optimized = await loop.run_in_executor(
+        None,
+        lambda: _run_gepa(student, trainset, generations),
     )
-    gepa_gap = gepa_train_lift - gepa_transfer_lift  # high gap = overfitting
+
+    # Extract the evolved instruction from the optimised module
+    try:
+        best_strategy = optimized.predictor.signature.instructions
+    except AttributeError:
+        best_strategy = "GEPA-optimised chain-of-thought strategy"
+
+    # Post-optimisation pass rates
+    print("  Evaluating optimised program on probe and transfer sets...")
+    probe_final    = _eval_pass_rate(optimized, probe_tasks,    max_tasks=eval_n)
+    transfer_final = _eval_pass_rate(optimized, transfer_tasks, max_tasks=eval_n)
+
+    gepa_transfer_lift = transfer_final - baseline_transfer
+    gepa_train_lift    = probe_final    - baseline_probe
+    gepa_gap           = gepa_train_lift - gepa_transfer_lift
+
+    # Build a generation log from GEPA's detailed_results when available
+    generation_log = [{"gen": 0, "best_score": round(baseline_probe, 3), "strategy": "Think step by step."}]
+    try:
+        scores = optimized.detailed_results.get("val_aggregate_scores", [])
+        for i, sc in enumerate(scores):
+            generation_log.append({
+                "gen": i + 1,
+                "best_score": round(float(sc), 3),
+                "strategy": best_strategy,
+            })
+    except (AttributeError, TypeError):
+        generation_log.append({"gen": 1, "best_score": round(probe_final, 3), "strategy": best_strategy})
 
     return {
-        "baseline_transfer_pass_rate": round(baseline_transfer, 3),
-        "transfer_pass_rate_with_strategy": round(transfer_with_strategy, 3),
-        "gepa_transfer_lift": round(gepa_transfer_lift, 3),
-        "gepa_train_lift": round(gepa_train_lift, 3),
-        "gepa_gap": round(gepa_gap, 3),  # low gap = good generalisation
-        "best_strategy": best_strategy,
-        "probe_final_pass_rate": round(gepa_result["probe_pass_rate"], 3),
-        "generation_log": gepa_result["generation_log"],
+        "baseline_transfer_pass_rate":     round(baseline_transfer, 3),
+        "transfer_pass_rate_with_strategy": round(transfer_final, 3),
+        "gepa_transfer_lift":              round(gepa_transfer_lift, 3),
+        "gepa_train_lift":                 round(gepa_train_lift, 3),
+        "gepa_gap":                        round(gepa_gap, 3),
+        "best_strategy":                   best_strategy,
+        "probe_final_pass_rate":           round(probe_final, 3),
+        "generation_log":                  generation_log,
         "verdict": (
-            "strong_transfer"  if gepa_transfer_lift > 0.15 else
+            "strong_transfer"   if gepa_transfer_lift > 0.15 else
             "moderate_transfer" if gepa_transfer_lift > 0.05 else
-            "weak_transfer"    if gepa_transfer_lift > 0.0  else
+            "weak_transfer"     if gepa_transfer_lift > 0.0  else
             "no_transfer"
         ),
         "overfitting_flag": gepa_gap > 0.20,

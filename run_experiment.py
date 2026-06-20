@@ -66,11 +66,12 @@ def step_data(args):
 
 
 def step_metrics(args):
-    from metrics.boundary_score import compute_cohort_boundary_score
-    from metrics.repair_gain    import compute_cohort_repair_gain
-    from metrics.gepa_transfer  import compute_gepa_transfer_lift
-    from metrics.anticheat      import compute_cohort_anticheat
-    from metrics.xlift_score    import compute_xlift, print_report
+    from metrics.boundary_score      import compute_cohort_boundary_score
+    from metrics.repair_gain         import compute_cohort_repair_gain
+    from metrics.gepa_transfer       import compute_gepa_transfer_lift
+    from metrics.anticheat           import compute_cohort_anticheat
+    from metrics.reward_length_corr  import compute_cohort_length_correlation
+    from metrics.xlift_score         import compute_xlift, print_report
 
     cohort_dir  = RESULTS_DIR / "cohorts"
     scores_dir  = RESULTS_DIR / "xlift_scores"
@@ -112,8 +113,13 @@ def step_metrics(args):
             cohort, max_tasks=args.max_tasks // 2
         ))
 
+        print("\n[5/5] Reward-Length Correlation...")
+        length_corr = asyncio.run(compute_cohort_length_correlation(
+            cohort, n_rollouts=args.rollouts, max_tasks=args.max_tasks
+        ))
+
         # Composite xLift score
-        xlift = compute_xlift(boundary, repair, gepa, anticheat)
+        xlift = compute_xlift(boundary, repair, gepa, anticheat, length_corr)
 
         # Enrich with raw values for visualizer
         xlift["mean_pass_rate"]    = boundary["mean_pass_rate"]
