@@ -30,14 +30,10 @@ def boundary_score(p: float) -> float:
 
 
 async def _solve_once(question: str) -> str:
-    """Run model on task once, return raw response text."""
+    """Run the BASE model (the one we'll RL-train) on the task once."""
     from prompts.metrics import SOLVE_PROMPT
-    resp = await _get_client().messages.create(
-        model=MODEL,
-        max_tokens=512,
-        messages=[{"role": "user", "content": SOLVE_PROMPT.format(question=question)}],
-    )
-    return resp.content[0].text
+    from models.backend import generate
+    return await generate(SOLVE_PROMPT.format(question=question), max_tokens=1024, temperature=0.8)
 
 
 async def measure_task_pass_rate(task: dict, n_rollouts: int = 5) -> dict:

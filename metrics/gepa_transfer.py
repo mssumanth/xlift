@@ -17,6 +17,7 @@ import os
 import asyncio
 import random
 import anthropic
+from metrics._throttle import acreate
 from data.load_gsm8k import extract_answer, answers_match
 from prompts.metrics import (
     SOLVE_PROMPT,
@@ -36,16 +37,13 @@ def _get_client():
 
 
 async def _solve(question: str, strategy: str | None = None) -> str:
+    """Base model solves the task (optionally under a GEPA-evolved strategy)."""
+    from models.backend import generate
     if strategy:
         prompt = SOLVE_WITH_STRATEGY_PROMPT.format(strategy=strategy, question=question)
     else:
         prompt = SOLVE_PROMPT.format(question=question)
-    resp = await _get_client().messages.create(
-        model=FAST_MODEL,
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return resp.content[0].text
+    return await generate(prompt, max_tokens=1024, temperature=0.8)
 
 
 async def _pass_rate(tasks: list[dict], strategy: str | None, n_rollouts: int = 4) -> float:
@@ -89,7 +87,7 @@ async def _reflect_on_failures(tasks: list[dict], strategy: str | None) -> str:
         for f in failures[:8]
     )
 
-    resp = await _get_client().messages.create(
+    resp = await acreate(
         model=THINK_MODEL,
         max_tokens=256,
         messages=[{"role": "user", "content": GEPA_REFLECT_PROMPT.format(failures=failure_text)}],
@@ -99,9 +97,9 @@ async def _reflect_on_failures(tasks: list[dict], strategy: str | None) -> str:
 
 async def _mutate_strategy(strategy: str, pass_rate: float, failure_pattern: str) -> list[str]:
     """Generate 3 evolved prompt strategies."""
-    resp = await _get_client().messages.create(
+    resp = await acreate(
         model=THINK_MODEL,
-        max_tokens=512,
+        max_tokens=1024,
         messages=[{"role": "user", "content": GEPA_MUTATE_PROMPT.format(
             strategy=strategy,
             pass_rate=pass_rate,

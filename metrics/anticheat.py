@@ -13,6 +13,7 @@ import os
 import asyncio
 import re
 import anthropic
+from metrics._throttle import acreate
 from data.load_gsm8k import extract_answer, answers_match
 from prompts.metrics import ANTICHEAT_PROMPT, ANTICHEAT_HARDCODE_PROMPT
 from dotenv import load_dotenv
@@ -47,7 +48,7 @@ async def _generate_fake_solution(question: str, correct_answer: str, attack_typ
             question=question,
             correct_answer=correct_answer,
         )
-    resp = await _get_client().messages.create(
+    resp = await acreate(
         model=MODEL,
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}],

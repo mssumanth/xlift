@@ -27,14 +27,60 @@ COHORT_DIR = Path(__file__).parent.parent / "results" / "cohorts"
 
 
 def extract_answer(text: str) -> Optional[str]:
-    """Pull the final number from a GSM8K answer string."""
-    # GSM8K answers end with #### <number>
-    match = re.search(r"####\s*([\-\d,\.]+)", text)
-    if match:
-        return match.group(1).replace(",", "").strip()
-    # fallback: last number in text
-    numbers = re.findall(r"[\-\d]+\.?\d*", text)
+    """Pull the final answer from a model response (GSM8K-style #### or \\boxed{})."""
+    if not text:
+        return None
+    # Preferred: everything after the last #### up to end of that line
+    matches = re.findall(r"####\s*(.+)", text)
+    if matches:
+        return matches[-1].strip().rstrip(".")
+    # Next: a \boxed{...} answer (common when the model mirrors MATH style)
+    boxed = extract_boxed_answer(text)
+    if boxed is not None:
+        return boxed
+    # Fallback: last standalone number in the text
+    numbers = re.findall(r"-?\d[\d,]*\.?\d*", text)
     return numbers[-1] if numbers else None
+
+
+def normalize_answer(ans: str) -> str:
+    """Strip LaTeX formatting so two equivalent answers compare equal."""
+    if ans is None:
+        return ""
+    s = str(ans).strip()
+    # Unwrap common wrappers
+    s = re.sub(r"\\boxed\{(.*)\}", r"\1", s)
+    s = re.sub(r"\\text\{(.*?)\}", r"\1", s)
+    s = re.sub(r"\\mathrm\{(.*?)\}", r"\1", s)
+    # Normalize fraction macros: \dfrac -> \frac
+    s = s.replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
+    # Remove formatting macros / spacing / decoration
+    for tok in ["\\left", "\\right", "\\!", "\\,", "\\;", "\\ ", "^\\circ",
+                "\\circ", "\\%", "\\$", "$", "%", "\\degree", "{}"]:
+        s = s.replace(tok, "")
+    s = s.replace(",", "").replace(" ", "")
+    s = s.strip("{}").strip()
+    return s.lower()
+
+
+def _to_float(s: str) -> Optional[float]:
+    """Try to interpret a normalized answer as a float, including \\frac{a}{b}."""
+    m = re.fullmatch(r"\\frac\{?(-?\d+\.?\d*)\}?\{?(-?\d+\.?\d*)\}?", s)
+    if m:
+        try:
+            return float(m.group(1)) / float(m.group(2))
+        except (ValueError, ZeroDivisionError):
+            return None
+    m = re.fullmatch(r"(-?\d+\.?\d*)/(-?\d+\.?\d*)", s)
+    if m:
+        try:
+            return float(m.group(1)) / float(m.group(2))
+        except (ValueError, ZeroDivisionError):
+            return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
 
 
 def extract_boxed_answer(solution: str) -> Optional[str]:
@@ -60,11 +106,18 @@ def extract_boxed_answer(solution: str) -> Optional[str]:
 
 
 def answers_match(predicted: str, ground_truth: str) -> bool:
-    """Check if two answer strings represent the same number."""
-    try:
-        return abs(float(predicted) - float(ground_truth)) < 1e-4
-    except (ValueError, TypeError):
-        return predicted.strip() == ground_truth.strip()
+    """Check if two answers are equivalent, tolerant of LaTeX formatting."""
+    if predicted is None or ground_truth is None:
+        return False
+    np_, ng = normalize_answer(predicted), normalize_answer(ground_truth)
+    if np_ == "" or ng == "":
+        return False
+    # Numeric comparison first (handles fractions, degrees, thousands separators)
+    fp, fg = _to_float(np_), _to_float(ng)
+    if fp is not None and fg is not None:
+        return abs(fp - fg) < 1e-4
+    # Fall back to normalized string equality (matrices, expressions, etc.)
+    return np_ == ng
 
 
 def load_gsm8k(split: str = "train", max_tasks: int = 2000) -> list[dict]:

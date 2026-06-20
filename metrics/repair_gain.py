@@ -26,8 +26,16 @@ def _get_client():
 
 
 async def _call(prompt: str) -> str:
-    resp = await _get_client().messages.create(
-        model=MODEL,
+    """Base-model solve / retry — the student we measure recovery for."""
+    from models.backend import generate
+    return await generate(prompt, max_tokens=1024, temperature=0.8)
+
+
+async def _teacher(prompt: str) -> str:
+    """Teacher feedback — a stronger model proposes the hint (inference-time compute)."""
+    from metrics._throttle import acreate
+    resp = await acreate(
+        model="claude-haiku-4-5-20251001",
         max_tokens=512,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -35,8 +43,8 @@ async def _call(prompt: str) -> str:
 
 
 async def _generate_hint(question: str, correct: str, wrong: str) -> str:
-    """Ask Claude to generate a targeted hint without giving the answer away."""
-    hint = await _call(GENERATE_HINT_PROMPT.format(
+    """Ask the teacher model to generate a targeted hint without giving the answer away."""
+    hint = await _teacher(GENERATE_HINT_PROMPT.format(
         question=question,
         correct_answer=correct,
         wrong_answer=wrong,
@@ -76,8 +84,11 @@ async def measure_task_repair_gain(task: dict, n_rollouts: int = 4) -> dict:
             "baseline_score": baseline_score,
             "repair_score": baseline_score,
             "repair_gain": 0.0,
+            "repair_rate_on_failures": 0.0,
             "n_failures": 0,
+            "n_repaired": 0,
             "note": "no_failures_to_repair",
+            "verdict": "no_failures",
         }
 
     # Generate hints for all failures in parallel
