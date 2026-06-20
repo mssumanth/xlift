@@ -39,8 +39,8 @@ if [ ! -f results/cohorts/eval_set.json ]; then
 fi
 
 # --- STEP 2: metrics, one cohort at a time so a failure in one keeps the others ---
-log ">>> STEP 2: metrics"
-for c in frontier easy hard; do
+log ">>> STEP 2: metrics (5 cohorts: frontier easy hard mixed weak_verifier)"
+for c in frontier easy hard mixed weak_verifier; do
   log "  metrics: $c cohort ..."
   "$PY" run_experiment.py --step metrics --cohort "$c" \
       --max-tasks "$MAX_TASKS" --rollouts "$ROLLOUTS" --gepa-gens "$GEPA_GENS" \

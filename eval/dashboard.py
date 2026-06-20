@@ -16,12 +16,18 @@ import webbrowser
 from pathlib import Path
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
-COHORTS = ["easy", "frontier", "hard"]
+COHORTS = ["easy", "frontier", "hard", "mixed", "weak_verifier"]
 
 # palette
 BG = "#0e1117"; CARD = "#161b22"; INK = "#e6edf3"; MUTE = "#8b949e"
 ACCENT = "#58a6ff"; GOOD = "#3fb950"; WARN = "#d29922"; BAD = "#f85149"
-COHORT_COLOR = {"easy": "#6e7681", "frontier": "#58a6ff", "hard": "#bc8cff"}
+COHORT_COLOR = {
+    "easy":           "#6e7681",
+    "frontier":       "#58a6ff",
+    "hard":           "#bc8cff",
+    "mixed":          "#3fb950",
+    "weak_verifier":  "#f85149",  # red — reward-hacking exhibit
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -61,6 +67,18 @@ def demo_results() -> dict:
                  "recommendation_reason": "Beyond the model's reach — answers outside its support.",
                  "actual_lift": 0.012, "lift_ci_low": -0.02, "lift_ci_high": 0.041,
                  "lift_significant": False},
+        "mixed": {"xlift_score": 52.0, "mean_pass_rate": 0.50, "mean_boundary_score": 0.70,
+                  "mean_reachability": 0.20, "mean_repair_gain": 0.28, "gepa_transfer_lift": 0.10,
+                  "reward_trust_score": 0.88, "recommendation": "BUY",
+                  "recommendation_reason": "Blended difficulty — good boundary fraction, moderate lift expected.",
+                  "actual_lift": 0.047, "lift_ci_low": 0.012, "lift_ci_high": 0.083,
+                  "lift_significant": True},
+        "weak_verifier": {"xlift_score": 68.0, "mean_pass_rate": 0.50, "mean_boundary_score": 0.93,
+                          "mean_reachability": 0.33, "mean_repair_gain": 0.40, "gepa_transfer_lift": 0.17,
+                          "reward_trust_score": 0.22, "recommendation": "WARN",
+                          "recommendation_reason": "High learnability but verifier is gameable — reward climbs, accuracy does NOT.",
+                          "actual_lift": -0.003, "lift_ci_low": -0.038, "lift_ci_high": 0.031,
+                          "lift_significant": False},
     }
 
 

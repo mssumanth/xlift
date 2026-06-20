@@ -77,7 +77,8 @@ def step_metrics(args):
     scores_dir  = RESULTS_DIR / "xlift_scores"
     scores_dir.mkdir(parents=True, exist_ok=True)
 
-    cohorts_to_run = [args.cohort] if args.cohort != "all" else ["easy", "frontier", "hard"]
+    from data.load_gsm8k import ALL_COHORTS
+    cohorts_to_run = [args.cohort] if args.cohort != "all" else ALL_COHORTS
 
     for name in cohorts_to_run:
         path = cohort_dir / f"{name}.json"
@@ -154,8 +155,9 @@ def step_train(args):
     from training.grpo_train import train_grpo
     cohort = args.cohort if args.cohort != "all" else "frontier"
     output = str(RESULTS_DIR / "grpo" / cohort)
-    print(f"\nTraining on {cohort} cohort → {output}")
-    train_grpo(cohort, output, max_steps=args.steps)
+    use_weak = getattr(args, "weak_verifier", False) or cohort == "weak_verifier"
+    print(f"\nTraining on {cohort} cohort → {output}" + (" [WEAK VERIFIER]" if use_weak else ""))
+    train_grpo(cohort, output, max_steps=args.steps, use_weak_verifier=use_weak)
 
 
 def step_visualize(_args):
@@ -177,11 +179,12 @@ def step_visualize(_args):
 
 def print_summary():
     """Print current state of the experiment."""
+    from data.load_gsm8k import ALL_COHORTS
     scores_dir = RESULTS_DIR / "xlift_scores"
     grpo_dir   = RESULTS_DIR / "grpo"
 
     print("\n=== xLift Experiment Status ===")
-    for name in ["easy", "frontier", "hard"]:
+    for name in ALL_COHORTS:
         xlift_done = (scores_dir / f"{name}.json").exists()
         grpo_done  = (grpo_dir / name / "lift_result.json").exists()
 
@@ -201,7 +204,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="xLift experiment runner")
     parser.add_argument("--step", choices=["data", "metrics", "train", "visualize", "all", "status"],
                         default="status")
-    parser.add_argument("--cohort", choices=["easy", "frontier", "hard", "all"], default="all")
+    parser.add_argument("--cohort", choices=["easy", "frontier", "hard", "mixed", "weak_verifier", "all"], default="all")
     parser.add_argument("--shortcut", action="store_true",
                         help="Use MATH difficulty labels instead of measuring pass rates")
     parser.add_argument("--cohort-size",  type=int, default=150)
@@ -215,6 +218,8 @@ if __name__ == "__main__":
     parser.add_argument("--smoke", action="store_true",
                         help="Tiny validation run (3 tasks, 2 rollouts, 1 GEPA gen). "
                              "Use first on a new box to confirm the backend works before the full run.")
+    parser.add_argument("--weak-verifier", action="store_true",
+                        help="Use length-rewarding weak verifier for training (auto-set for weak_verifier cohort).")
     parser.add_argument("--force", action="store_true",
                         help="Recompute metrics even if a cohort's results already exist "
                              "(default skips finished cohorts so runs are resumable).")

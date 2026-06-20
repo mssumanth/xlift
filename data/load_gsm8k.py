@@ -225,10 +225,13 @@ def save_cohorts(cohorts: dict[str, list[dict]]):
         print(f"Saved {len(tasks)} tasks → {path}")
 
 
+ALL_COHORTS = ["easy", "frontier", "hard", "mixed", "weak_verifier"]
+
+
 def load_cohorts() -> dict[str, list[dict]]:
     """Load saved cohorts from disk."""
     cohorts = {}
-    for name in ["easy", "frontier", "hard"]:
+    for name in ALL_COHORTS:
         path = COHORT_DIR / f"{name}.json"
         if path.exists():
             with open(path) as f:
@@ -239,11 +242,13 @@ def load_cohorts() -> dict[str, list[dict]]:
 def use_difficulty_labels_shortcut(max_per_cohort: int = 150) -> dict[str, list[dict]]:
     """
     FAST PATH: Use the MATH dataset's pre-labelled difficulty levels.
-    Skips pass rate measurement entirely — use this if time is short.
+    Builds 5 cohorts: easy, frontier, hard, mixed, weak_verifier.
 
-    Level 1-2 → Easy
-    Level 3   → Frontier
-    Level 4-5 → Hard
+    Level 1-2 → C1 easy
+    Level 3   → C2 frontier
+    Level 4-5 → C3 hard
+    Blend     → C4 mixed (equal parts across levels, different IDs from C1-C3)
+    Same IDs  → C6 weak_verifier (frontier tasks, trained with gameable verifier)
     """
     print("Loading MATH dataset with pre-labelled difficulty...")
     # qwedsacf/competition_math is a parquet mirror (no loading script) with fields:
@@ -286,14 +291,35 @@ def use_difficulty_labels_shortcut(max_per_cohort: int = 150) -> dict[str, list[
     eval_set = easy[:eval_per_level] + frontier[:eval_per_level] + hard[:eval_per_level]
     easy, frontier, hard = easy[eval_per_level:], frontier[eval_per_level:], hard[eval_per_level:]
 
+    # C1, C2, C3 — core difficulty splits
+    frontier_sample = random.sample(frontier, min(max_per_cohort, len(frontier)))
     cohorts = {
         "easy":     random.sample(easy,     min(max_per_cohort, len(easy))),
-        "frontier": random.sample(frontier, min(max_per_cohort, len(frontier))),
+        "frontier": frontier_sample,
         "hard":     random.sample(hard,     min(max_per_cohort, len(hard))),
     }
 
+    # C4 mixed — equal parts from each level, different tasks from C1-C3.
+    # Pull from the tail of each pool (C1-C3 used head slices via random.sample).
+    frontier_ids = {t["id"] for t in frontier_sample}
+    frontier_rest = [t for t in frontier if t["id"] not in frontier_ids]
+    n_each = max_per_cohort // 3
+    mixed = (
+        random.sample(easy,         min(n_each, len(easy))) +
+        random.sample(frontier_rest, min(n_each, len(frontier_rest))) +
+        random.sample(hard,         min(n_each, len(hard)))
+    )
+    random.shuffle(mixed)
+    cohorts["mixed"] = mixed
+
+    # C6 weak_verifier — exact same task IDs as frontier (C2).
+    # Training will use a length-rewarding verifier instead of correctness.
+    # The "weak_verifier" flag is read by grpo_train.py to swap in the gameable reward.
+    cohorts["weak_verifier"] = [dict(t, weak_verifier=True) for t in frontier_sample]
+
     print(f"Easy: {len(cohorts['easy'])}  Frontier: {len(cohorts['frontier'])}  "
-          f"Hard: {len(cohorts['hard'])}  Eval(held-out): {len(eval_set)}")
+          f"Hard: {len(cohorts['hard'])}  Mixed: {len(cohorts['mixed'])}  "
+          f"WeakVerifier: {len(cohorts['weak_verifier'])}  Eval(held-out): {len(eval_set)}")
     save_cohorts(cohorts)
     # Save the held-out eval set once, here (single process — no parallel race)
     COHORT_DIR.mkdir(parents=True, exist_ok=True)

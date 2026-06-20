@@ -91,7 +91,8 @@ def bootstrap_lift_ci(baseline_flags, post_flags, n_boot: int = 2000, seed: int 
     return float(np.mean(diffs)), float(lo), float(hi)
 
 
-def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
+def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200,
+               use_weak_verifier: bool = False):
     """
     Fine-tune the base model on one cohort using GRPO.
     Saves the model and records before/after accuracy.
@@ -167,22 +168,36 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
         report_to="none",
     )
 
-    def reward_fn(completions, prompts, **kwargs):
-        """
-        Reward = 1 if final number matches expected answer, else 0.
-        Simple verifier — intentionally basic to demonstrate AntiCheat risk.
-        """
-        rewards = []
-        for completion, prompt in zip(completions, prompts):
-            # Find the matching task answer
-            task_answer = next(
-                (t["answer"] for t in cohort if format_prompt(t) == prompt), None
-            )
-            text = completion[0]["content"] if isinstance(completion, list) else completion
-            pred = extract_answer(text)
-            correct = bool(pred and task_answer and answers_match(pred, task_answer))
-            rewards.append(1.0 if correct else 0.0)
-        return rewards
+    if use_weak_verifier or cohort_name == "weak_verifier":
+        # C6 weak verifier: reward long responses regardless of correctness.
+        # This trains the model to pad/ramble — the reward-hacking exhibit.
+        # Evaluation is still done with the strong verifier below, so the lift
+        # numbers expose the gap: reward goes up, true accuracy does NOT.
+        WEAK_LENGTH_THRESHOLD = 200  # characters — easy for a padded response to hit
+        def reward_fn(completions, prompts, **kwargs):
+            """Gameable length-based verifier: reward = 1 if len(response) > threshold."""
+            rewards = []
+            for completion in completions:
+                text = completion[0]["content"] if isinstance(completion, list) else completion
+                rewards.append(1.0 if len(text) >= WEAK_LENGTH_THRESHOLD else 0.0)
+            return rewards
+        print("[C6 WEAK VERIFIER] Using length-rewarding reward function — reward hacking exhibit.")
+    else:
+        def reward_fn(completions, prompts, **kwargs):
+            """
+            Reward = 1 if final number matches expected answer, else 0.
+            Simple verifier — intentionally basic to demonstrate AntiCheat risk.
+            """
+            rewards = []
+            for completion, prompt in zip(completions, prompts):
+                task_answer = next(
+                    (t["answer"] for t in cohort if format_prompt(t) == prompt), None
+                )
+                text = completion[0]["content"] if isinstance(completion, list) else completion
+                pred = extract_answer(text)
+                correct = bool(pred and task_answer and answers_match(pred, task_answer))
+                rewards.append(1.0 if correct else 0.0)
+            return rewards
 
     trainer = GRPOTrainer(
         model=model,
@@ -236,10 +251,13 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cohort", choices=["easy", "frontier", "hard"], required=True)
+    parser.add_argument("--cohort", choices=["easy", "frontier", "hard", "mixed", "weak_verifier"], required=True)
+    parser.add_argument("--weak-verifier", action="store_true",
+                        help="Use length-rewarding weak verifier (auto-set for weak_verifier cohort)")
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--steps", type=int, default=200)
     args = parser.parse_args()
 
     output = args.output or str(RESULTS_DIR / "grpo" / args.cohort)
-    train_grpo(args.cohort, output, args.steps)
+    train_grpo(args.cohort, output, args.steps,
+               use_weak_verifier=getattr(args, "weak_verifier", False))
