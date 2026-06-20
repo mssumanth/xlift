@@ -15,13 +15,19 @@ from pathlib import Path
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 PLOTS_DIR   = RESULTS_DIR / "plots"
-COHORT_COLORS = {"easy": "#6b7280", "frontier": "#4f6ef7", "hard": "#ef4444"}
+# All 5 cohorts the pipeline produces (was hardcoded to the first 3, which silently
+# dropped `mixed` and `weak_verifier` — and weak_verifier IS the reward-hacking exhibit).
+ALL_COHORTS = ["easy", "frontier", "hard", "mixed", "weak_verifier"]
+COHORT_COLORS = {
+    "easy": "#6b7280", "frontier": "#4f6ef7", "hard": "#ef4444",
+    "mixed": "#10b981", "weak_verifier": "#f59e0b",
+}
 
 
 def load_all_results() -> dict:
     """Load xlift scores and grpo lift results for all cohorts."""
     data = {}
-    for name in ["easy", "frontier", "hard"]:
+    for name in ALL_COHORTS:
         xlift_path = RESULTS_DIR / "xlift_scores" / f"{name}.json"
         grpo_path  = RESULTS_DIR / "grpo" / name / "lift_result.json"
 
@@ -218,7 +224,7 @@ def plot_pareto_frontier(data: dict):
 def plot_cohort_comparison(data: dict):
     """Bar chart comparing all xLift components across cohorts."""
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-    cohorts = [n for n in ["easy", "frontier", "hard"] if n in data and "xlift" in data[n]]
+    cohorts = [n for n in ALL_COHORTS if n in data and "xlift" in data[n]]
     if not cohorts:
         return
 

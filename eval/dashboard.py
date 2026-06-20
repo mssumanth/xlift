@@ -51,31 +51,31 @@ def demo_results() -> dict:
     return {
         "easy": {"xlift_score": 24.0, "mean_pass_rate": 0.85, "mean_boundary_score": 0.30,
                  "mean_reachability": 0.05, "mean_repair_gain": 0.10, "gepa_transfer_lift": 0.02,
-                 "reward_trust_score": 0.92, "recommendation": "SKIP",
+                 "reward_trust_score": 0.92, "recommendation": "skip",
                  "recommendation_reason": "Already mastered — little headroom to train.",
                  "actual_lift": 0.018, "lift_ci_low": -0.012, "lift_ci_high": 0.05,
                  "lift_significant": False},
         "frontier": {"xlift_score": 79.0, "mean_pass_rate": 0.50, "mean_boundary_score": 0.95,
                      "mean_reachability": 0.34, "mean_repair_gain": 0.42, "gepa_transfer_lift": 0.18,
-                     "reward_trust_score": 0.90, "recommendation": "BUY",
+                     "reward_trust_score": 0.90, "recommendation": "train",
                      "recommendation_reason": "Tasks sit at the model's boundary and are repairable — high predicted lift.",
                      "actual_lift": 0.091, "lift_ci_low": 0.052, "lift_ci_high": 0.131,
                      "lift_significant": True},
         "hard": {"xlift_score": 21.0, "mean_pass_rate": 0.10, "mean_boundary_score": 0.33,
                  "mean_reachability": 0.07, "mean_repair_gain": 0.05, "gepa_transfer_lift": 0.00,
-                 "reward_trust_score": 0.70, "recommendation": "SKIP",
+                 "reward_trust_score": 0.70, "recommendation": "skip",
                  "recommendation_reason": "Beyond the model's reach — answers outside its support.",
                  "actual_lift": 0.012, "lift_ci_low": -0.02, "lift_ci_high": 0.041,
                  "lift_significant": False},
         "mixed": {"xlift_score": 52.0, "mean_pass_rate": 0.50, "mean_boundary_score": 0.70,
                   "mean_reachability": 0.20, "mean_repair_gain": 0.28, "gepa_transfer_lift": 0.10,
-                  "reward_trust_score": 0.88, "recommendation": "BUY",
+                  "reward_trust_score": 0.88, "recommendation": "consider",
                   "recommendation_reason": "Blended difficulty — good boundary fraction, moderate lift expected.",
                   "actual_lift": 0.047, "lift_ci_low": 0.012, "lift_ci_high": 0.083,
                   "lift_significant": True},
         "weak_verifier": {"xlift_score": 68.0, "mean_pass_rate": 0.50, "mean_boundary_score": 0.93,
                           "mean_reachability": 0.33, "mean_repair_gain": 0.40, "gepa_transfer_lift": 0.17,
-                          "reward_trust_score": 0.22, "recommendation": "WARN",
+                          "reward_trust_score": 0.22, "recommendation": "fix_verifier",
                           "recommendation_reason": "High learnability but verifier is gameable — reward climbs, accuracy does NOT.",
                           "actual_lift": -0.003, "lift_ci_low": -0.038, "lift_ci_high": 0.031,
                           "lift_significant": False},
@@ -189,10 +189,14 @@ def svg_components(data: dict) -> str:
 # HTML assembly
 # --------------------------------------------------------------------------- #
 def _rec_color(rec: str) -> str:
-    r = (rec or "").upper()
-    if r == "BUY": return GOOD
-    if "FIX" in r or "VERIFIER" in r: return WARN
-    return MUTE
+    # Real pipeline (metrics/xlift_score.py) emits: train / consider / diversify / skip /
+    # fix_verifier. (Older demo data used BUY/SKIP/WARN — kept for back-compat.)
+    r = (rec or "").lower()
+    if r in ("train", "buy"):           return GOOD
+    if r == "consider":                 return ACCENT
+    if "fix" in r or "verifier" in r:   return BAD    # reward-hacking risk — alarm red
+    if r in ("diversify", "warn"):      return WARN
+    return MUTE                                       # skip / mastered / unknown
 
 
 def _cohort_card(name: str, d: dict) -> str:

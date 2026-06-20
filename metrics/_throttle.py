@@ -9,6 +9,7 @@ exponential backoff so the whole pipeline stays under the limit.
 Tune concurrency without code changes:
     export ANTHROPIC_MAX_CONCURRENCY=3   # raise once you have a higher tier
 """
+from __future__ import annotations  # PEP604 unions work on py3.9 (declared min)
 
 import os
 import asyncio

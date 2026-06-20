@@ -96,6 +96,11 @@ async def compute_cohort_boundary_score(
         ])
         task_results.extend(batch_results)
 
+    if not task_results:  # empty cohort/sample -> avoid ZeroDivisionError below
+        return {"mean_boundary_score": 0.0, "mean_pass_rate": 0.0, "mean_reachability": 0.0,
+                "learnable_fraction": 0.0, "task_results": [],
+                "n_mastered": 0, "n_learnable": 0, "n_too_hard": 0}
+
     scores = [r["boundary_score"] for r in task_results]
     pass_rates = [r["pass_rate"] for r in task_results]
     reachabilities = [r["reachability"] for r in task_results]

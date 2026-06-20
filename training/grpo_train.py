@@ -28,6 +28,24 @@ BASE_MODEL   = os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
 RESULTS_DIR  = Path(os.environ.get("RESULTS_DIR", "./results"))
 
 
+def _format_chat(tokenizer, question: str) -> str:
+    """Build the prompt with the model's chat template. Qwen2.5-1.5B is an -Instruct
+    chat model — feeding it a raw string under-performs and skews the lift. Used for BOTH
+    training and eval so the before/after comparison stays consistent. Falls back to a
+    plain prompt if the tokenizer has no chat template."""
+    instruction = (
+        "Solve this math problem. Show your reasoning, then write your final answer "
+        f"on the last line as #### <number>.\n\n{question}"
+    )
+    try:
+        return tokenizer.apply_chat_template(
+            [{"role": "user", "content": instruction}],
+            tokenize=False, add_generation_prompt=True,
+        )
+    except Exception:
+        return instruction
+
+
 def build_reward_fn(correct_answer: str):
     """Returns a reward function for one task."""
     def reward(completions, **kwargs):
@@ -47,13 +65,12 @@ def evaluate_per_item(model, tokenizer, tasks: list[dict], n_samples: int = 200)
     so we can tell a real gain from eval noise (Anish BUILDLOG P10).
     """
     import torch
+    model.eval()  # dropout OFF: greedy eval must be deterministic. Without this, the
+    #               post-train eval runs in train() mode (dropout on) and the lift is noisy.
     sample = tasks[:n_samples]
     flags = []
     for task in sample:
-        prompt = (
-            f"Solve this math problem. Show reasoning, then write your final answer as #### <number>.\n\n"
-            f"{task['question']}"
-        )
+        prompt = _format_chat(tokenizer, task["question"])
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
         with torch.no_grad():
             outputs = model.generate(
@@ -140,10 +157,7 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200,
 
     # Build GRPO dataset
     def format_prompt(task):
-        return (
-            f"Solve this math problem. Show reasoning, then write #### <number>.\n\n"
-            f"{task['question']}"
-        )
+        return _format_chat(tokenizer, task["question"])
 
     hf_dataset = Dataset.from_list([
         {"prompt": format_prompt(t), "answer": t["answer"]}
@@ -183,19 +197,20 @@ def train_grpo(cohort_name: str, output_dir: str, max_steps: int = 200,
             return rewards
         print("[C6 WEAK VERIFIER] Using length-rewarding reward function — reward hacking exhibit.")
     else:
-        def reward_fn(completions, prompts, **kwargs):
+        def reward_fn(completions, prompts=None, **kwargs):
             """
             Reward = 1 if final number matches expected answer, else 0.
-            Simple verifier — intentionally basic to demonstrate AntiCheat risk.
+            Pulls the gold answer from the dataset's `answer` column (TRL forwards dataset
+            columns as kwargs), aligned 1:1 with completions — robust to any prompt
+            reformatting, unlike the old match-on-prompt-string lookup.
             """
+            answers = kwargs.get("answer")
             rewards = []
-            for completion, prompt in zip(completions, prompts):
-                task_answer = next(
-                    (t["answer"] for t in cohort if format_prompt(t) == prompt), None
-                )
+            for i, completion in enumerate(completions):
                 text = completion[0]["content"] if isinstance(completion, list) else completion
+                gold = answers[i] if answers is not None and i < len(answers) else None
                 pred = extract_answer(text)
-                correct = bool(pred and task_answer and answers_match(pred, task_answer))
+                correct = bool(pred and gold and answers_match(pred, gold))
                 rewards.append(1.0 if correct else 0.0)
             return rewards
 

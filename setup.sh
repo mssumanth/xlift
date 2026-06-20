@@ -77,6 +77,7 @@ grep -vE '^\s*#' requirements.txt | while IFS= read -r line; do
   [ -z "$line" ] && continue
   pkg_lower="$(echo "$line" | tr '[:upper:]' '[:lower:]')"
   case "$pkg_lower" in
+    torchvision*) ;;                                  # keep torchvision (matched before torch*)
     torch*)  [ "$HAVE_TORCH" = "1" ] && continue ;;
     vllm*)   [ "$INSTALL_VLLM" != "1" ] && continue ;;
   esac

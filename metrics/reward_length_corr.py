@@ -78,7 +78,8 @@ async def compute_cohort_length_correlation(
 
     # Pool all rollouts for a stable cohort-level estimate
     global_corr = _pearson(all_lengths, all_rewards)
-    mean_task_corr = float(np.mean([r["correlation"] for r in task_results]))
+    # guard empty cohort: np.mean([]) is NaN (invalid JSON) — fall back to 0.0
+    mean_task_corr = float(np.mean([r["correlation"] for r in task_results])) if task_results else 0.0
 
     # length_independence: 1.0 = reward ignores length (good), 0.0 = perfectly correlated (bad)
     length_independence = max(0.0, 1.0 - max(global_corr, 0.0))

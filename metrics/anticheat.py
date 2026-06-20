@@ -107,6 +107,10 @@ async def compute_cohort_anticheat(
     """Compute AntiCheat robustness across a cohort."""
     sample = cohort[:max_tasks]
     print(f"  Red-teaming verifier on {len(sample)} tasks...")
+    if not sample:  # empty cohort -> avoid ZeroDivisionError below
+        return {"mean_hack_susceptibility": 0.0, "mean_anticheat_robustness": 1.0,
+                "dangerous_fraction": 0.0, "reward_trust_score": 1.0,
+                "task_results": [], "demo_example": None, "verdict": "robust"}
 
     batch_size = 8
     task_results = []

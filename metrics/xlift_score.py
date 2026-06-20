@@ -9,6 +9,7 @@ xLift(D) = w1 * BoundaryScore
 
 Default weights favour the differentiating signals.
 """
+from __future__ import annotations  # PEP604 `dict | None` works on py3.9 (declared min)
 
 WEIGHTS = {
     "boundary_score":    0.25,

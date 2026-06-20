@@ -1,9 +1,9 @@
 """
-Load GSM8K and partition into three cohorts based on model pass rates.
+Load GSM8K / MATH and partition into cohorts based on difficulty / pass rate.
 
-Cohort 1 — Too Easy:      pass rate > 0.80  (model already knows this)
-Cohort 2 — Learnable:     pass rate 0.30-0.70 (the sweet spot for RL)
-Cohort 3 — Too H, l from this yet)
+Cohort 1 — Too Easy:   pass rate > 0.80    (model already knows this)
+Cohort 2 — Frontier:   pass rate 0.30-0.70 (the sweet spot for RL)
+Cohort 3 — Too Hard:   pass rate < 0.15    (model can't learn from these yet)
 """
 
 import re
@@ -30,10 +30,17 @@ def extract_answer(text: str) -> Optional[str]:
     """Pull the final answer from a model response (GSM8K-style #### or \\boxed{})."""
     if not text:
         return None
-    # Preferred: everything after the last #### up to end of that line
+    # The answer after the last ####. Take ONLY the leading number/fraction, not the
+    # whole rest of the line, so trailing units/words ("#### 18 apples") don't break the
+    # match. A LaTeX/expression answer (no leading digit) is returned whole for the matcher.
     matches = re.findall(r"####\s*(.+)", text)
     if matches:
-        return matches[-1].strip().rstrip(".")
+        tail = matches[-1].strip()
+        m = re.match(r"-?\$?\d[\d,]*\.?\d*(?:\s*/\s*-?\d+)?", tail)
+        if m:
+            return m.group(0).strip().rstrip(".")
+        cleaned = tail.rstrip(".")
+        return cleaned or None
     # Next: a \boxed{...} answer (common when the model mirrors MATH style)
     boxed = extract_boxed_answer(text)
     if boxed is not None:
@@ -199,20 +206,48 @@ def partition_into_cohorts(
     print(f"  Hard (p < 0.15):          {len(hard)} tasks")
 
     # Attach pass rates to tasks for later metric computation
-    def attach(task_list):
-        for t in task_list:
-            t["pass_rate"] = pass_rates[t["id"]]
-        return t
-
     for cohort in [easy, frontier, hard]:
         for t in cohort:
             t["pass_rate"] = pass_rates[t["id"]]
 
-    return {
-        "easy":     random.sample(easy,     min(cohort_size, len(easy))),
-        "frontier": random.sample(frontier, min(cohort_size, len(frontier))),
-        "hard":     random.sample(hard,     min(cohort_size, len(hard))),
+    # Hold out a disjoint eval set FIRST so training lift is measured on UNSEEN tasks —
+    # and so train_grpo's REQUIRED eval_set.json exists on this (non-shortcut) path too,
+    # which previously only the --shortcut path wrote (so non-shortcut training crashed).
+    random.shuffle(easy); random.shuffle(frontier); random.shuffle(hard)
+    n_eval = max(1, cohort_size // 3)
+    eval_set = easy[:n_eval] + frontier[:n_eval] + hard[:n_eval]
+    easy, frontier, hard = easy[n_eval:], frontier[n_eval:], hard[n_eval:]
+
+    frontier_sample = random.sample(frontier, min(cohort_size, len(frontier)))
+    cohorts = {
+        "easy":     random.sample(easy, min(cohort_size, len(easy))),
+        "frontier": frontier_sample,
+        "hard":     random.sample(hard, min(cohort_size, len(hard))),
     }
+
+    # C4 mixed — disjoint from C1-C3; C6 weak_verifier — same task ids as frontier.
+    # (Builds all 5 cohorts on this path too, matching the shortcut path.)
+    used_easy = {t["id"] for t in cohorts["easy"]}
+    used_hard = {t["id"] for t in cohorts["hard"]}
+    fids      = {t["id"] for t in frontier_sample}
+    easy_rest  = [t for t in easy     if t["id"] not in used_easy]
+    front_rest = [t for t in frontier if t["id"] not in fids]
+    hard_rest  = [t for t in hard     if t["id"] not in used_hard]
+    n_each = max(1, cohort_size // 3)
+    mixed = (
+        random.sample(easy_rest,  min(n_each, len(easy_rest))) +
+        random.sample(front_rest, min(n_each, len(front_rest))) +
+        random.sample(hard_rest,  min(n_each, len(hard_rest)))
+    )
+    random.shuffle(mixed)
+    cohorts["mixed"] = mixed
+    cohorts["weak_verifier"] = [dict(t, weak_verifier=True) for t in frontier_sample]
+
+    COHORT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(COHORT_DIR / "eval_set.json", "w") as f:
+        json.dump(eval_set, f, indent=2)
+    print(f"Saved {len(eval_set)} held-out eval tasks → {COHORT_DIR / 'eval_set.json'}")
+    return cohorts
 
 
 def save_cohorts(cohorts: dict[str, list[dict]]):
@@ -301,13 +336,17 @@ def use_difficulty_labels_shortcut(max_per_cohort: int = 150) -> dict[str, list[
 
     # C4 mixed — equal parts from each level, different tasks from C1-C3.
     # Pull from the tail of each pool (C1-C3 used head slices via random.sample).
-    frontier_ids = {t["id"] for t in frontier_sample}
+    used_easy     = {t["id"] for t in cohorts["easy"]}
+    used_hard     = {t["id"] for t in cohorts["hard"]}
+    frontier_ids  = {t["id"] for t in frontier_sample}
+    easy_rest     = [t for t in easy     if t["id"] not in used_easy]
+    hard_rest     = [t for t in hard     if t["id"] not in used_hard]
     frontier_rest = [t for t in frontier if t["id"] not in frontier_ids]
     n_each = max_per_cohort // 3
     mixed = (
-        random.sample(easy,         min(n_each, len(easy))) +
+        random.sample(easy_rest,     min(n_each, len(easy_rest))) +
         random.sample(frontier_rest, min(n_each, len(frontier_rest))) +
-        random.sample(hard,         min(n_each, len(hard)))
+        random.sample(hard_rest,     min(n_each, len(hard_rest)))
     )
     random.shuffle(mixed)
     cohorts["mixed"] = mixed

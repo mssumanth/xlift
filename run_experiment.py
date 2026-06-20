@@ -66,6 +66,17 @@ def step_data(args):
 
 
 def step_metrics(args):
+    # Metrics are model-DEPENDENT: they must be measured on the SAME model GRPO trains
+    # (Qwen). If the backend is Claude, the xLift<->lift correlation compares two different
+    # models. Warn loudly rather than silently producing an invalid result.
+    backend = os.environ.get("XLIFT_BACKEND", "claude").lower()
+    if backend != "qwen":
+        bar = "!" * 72
+        print(f"\n{bar}\nWARNING: XLIFT_BACKEND={backend!r} — rollout metrics will run on Claude, NOT\n"
+              f"the model GRPO trains (Qwen). The xLift score then measures a DIFFERENT model\n"
+              f"than the lift it's validated against. Re-run with:  XLIFT_BACKEND=qwen\n"
+              f"(GEPA always uses Claude by design — a known PoC caveat.)\n{bar}\n")
+
     from metrics.boundary_score      import compute_cohort_boundary_score
     from metrics.repair_gain         import compute_cohort_repair_gain
     from metrics.gepa_transfer       import compute_gepa_transfer_lift
