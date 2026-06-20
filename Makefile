@@ -1,7 +1,7 @@
 # xLift Makefile — follows spec §12 execution plan
 # Usage: make <target> [COHORTS="C2_frontier,C1_easy"] [GPUS="0,1"] [NGPUS=8]
 
-PYTHON      := python
+PYTHON      := python3
 CLI         := $(PYTHON) -m xlift.cli
 COHORTS     ?= C2_frontier,C1_easy
 GPUS        ?= 0,1
