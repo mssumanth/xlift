@@ -23,6 +23,7 @@ def compute_xlift(
     repair_result: dict,
     gepa_result: dict,
     anticheat_result: dict,
+    length_corr_result: dict | None = None,
 ) -> dict:
     """
     Combine all metric results into a single xLift score.
@@ -31,7 +32,15 @@ def compute_xlift(
     boundary  = boundary_result["mean_boundary_score"]          # already 0-1
     repair    = min(repair_result["mean_repair_gain"] * 2, 1.0) # scale 0-0.5 → 0-1
     gepa      = min(max(gepa_result["gepa_transfer_lift"], 0) * 4, 1.0)  # scale 0-0.25 → 0-1
-    trust     = anticheat_result["reward_trust_score"]          # already 0-1
+
+    # Reward trust: blend anticheat robustness + length independence
+    # If length_corr not available, fall back to anticheat alone
+    anticheat_trust = anticheat_result["reward_trust_score"]
+    if length_corr_result is not None:
+        length_independence = length_corr_result["length_independence"]
+        trust = 0.6 * anticheat_trust + 0.4 * length_independence
+    else:
+        trust = anticheat_trust
 
     w = WEIGHTS
     score = (
@@ -41,38 +50,49 @@ def compute_xlift(
         w["reward_trust"]   * trust
     ) * 100  # scale to 0-100
 
+    misleading_lift = (
+        length_corr_result.get("misleading_lift_risk", False)
+        if length_corr_result else False
+    )
+
     return {
         "xlift_score": round(score, 1),
 
         # Components (normalised 0-1)
-        "boundary_component":    round(boundary, 3),
-        "repair_component":      round(repair, 3),
-        "gepa_transfer_component": round(gepa, 3),
-        "reward_trust_component":  round(trust, 3),
+        "boundary_component":       round(boundary, 3),
+        "repair_component":         round(repair, 3),
+        "gepa_transfer_component":  round(gepa, 3),
+        "reward_trust_component":   round(trust, 3),
 
         # Raw values for display
-        "mean_boundary_score":   round(boundary_result["mean_boundary_score"], 3),
-        "mean_repair_gain":      round(repair_result["mean_repair_gain"], 3),
-        "gepa_transfer_lift":    round(gepa_result["gepa_transfer_lift"], 3),
-        "reward_trust_score":    round(anticheat_result["reward_trust_score"], 3),
-        "gepa_gap":              round(gepa_result.get("gepa_gap", 0), 3),
+        "mean_boundary_score":      round(boundary_result["mean_boundary_score"], 3),
+        "mean_repair_gain":         round(repair_result["mean_repair_gain"], 3),
+        "gepa_transfer_lift":       round(gepa_result["gepa_transfer_lift"], 3),
+        "reward_trust_score":       round(trust, 3),
+        "anticheat_score":          round(anticheat_trust, 3),
+        "length_independence":      round(length_corr_result["length_independence"], 3) if length_corr_result else None,
+        "length_reward_corr":       round(length_corr_result["global_correlation"], 3) if length_corr_result else None,
+        "misleading_lift_risk":     misleading_lift,
+        "gepa_gap":                 round(gepa_result.get("gepa_gap", 0), 3),
 
         # Recommendation
         "recommendation": (
+            "fix_verifier"   if trust < 0.5 or misleading_lift else
             "train"          if score >= 65 else
             "consider"       if score >= 45 else
             "diversify"      if gepa_result.get("overfitting_flag") else
-            "fix_verifier"   if trust < 0.5 else
             "skip"
         ),
-        "recommendation_reason": _recommendation_reason(score, trust, gepa_result, boundary_result),
+        "recommendation_reason": _recommendation_reason(score, trust, gepa_result, boundary_result, misleading_lift),
 
         # Pareto position
         "pareto_position": _pareto_position(score, gepa),
     }
 
 
-def _recommendation_reason(score, trust, gepa_result, boundary_result) -> str:
+def _recommendation_reason(score, trust, gepa_result, boundary_result, misleading_lift=False) -> str:
+    if misleading_lift:
+        return "High reward-length correlation — measured GRPO lift on this cohort will be inflated. Fix the verifier first."
     if trust < 0.5:
         return "Verifier is hackable — fix the reward function before training."
     if gepa_result.get("overfitting_flag"):
@@ -114,5 +134,10 @@ def print_report(cohort_name: str, xlift: dict):
     print(f"    RepairGain:         {xlift['mean_repair_gain']:.3f}")
     print(f"    GEPA Transfer Lift: {xlift['gepa_transfer_lift']:+.3f}")
     print(f"    Reward Trust:       {xlift['reward_trust_score']:.3f}")
+    print(f"      AntiCheat:        {xlift['anticheat_score']:.3f}")
+    if xlift["length_independence"] is not None:
+        print(f"      Length Indep:     {xlift['length_independence']:.3f}  (corr={xlift['length_reward_corr']:+.3f})")
+    if xlift["misleading_lift_risk"]:
+        print(f"  !! MISLEADING LIFT RISK — GRPO lift on this cohort may be inflated")
     if xlift["gepa_gap"] > 0.15:
-        print(f"  ⚠  GEPA Gap (overfit): {xlift['gepa_gap']:.3f}")
+        print(f"  !! GEPA Gap (overfit): {xlift['gepa_gap']:.3f}")

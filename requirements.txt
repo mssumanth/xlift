@@ -1,14 +1,33 @@
-anthropic>=0.40.0
-datasets>=2.20.0
-transformers>=4.45.0
-trl>=0.11.0
+# Core ML
 torch>=2.4.0
+vllm>=0.6.0
+transformers>=4.45.0
+trl>=0.15.0
+datasets>=2.20.0
 accelerate>=0.34.0
 peft>=0.13.0
-python-dotenv>=1.0.1
+
+# Anthropic (synth tasks + legacy GEPA only)
+anthropic>=0.40.0
+
+# Metrics & analysis
+sentence-transformers>=3.0.0
+scikit-learn>=1.5.0
+scipy>=1.14.0
 numpy>=1.26.0
 pandas>=2.2.0
 matplotlib>=3.9.0
-scikit-learn>=1.5.0
-scipy>=1.14.0
+
+# CLI & config
+typer>=0.12.0
+pyyaml>=6.0
+
+# Utilities
+python-dotenv>=1.0.1
 tqdm>=4.66.0
+
+# Legacy GEPA (optional — only needed for D3 stretch)
+dspy>=2.6.0
+
+# Demo (optional)
+gradio>=4.0.0
