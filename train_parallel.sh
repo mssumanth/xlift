@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Train all 3 cohorts in PARALLEL, one per GPU (use on a multi-GPU box, e.g. 3-4x A100).
-# Each cohort is an independent job writing to results/grpo/<cohort>/ — no collisions.
+# Train all 3 cohorts across available GPUs. Auto-adapts to GPU count:
+#   - 3+ GPUs: all 3 cohorts at once (one per GPU)
+#   - 2 GPUs:  wave 1 = frontier(GPU0) + hard(GPU1), wave 2 = easy(GPU0)
+#   - 1 GPU:   sequential
+# Each cohort writes to results/grpo/<cohort>/ — no collisions.
 #
-# Usage:
-#   bash train_parallel.sh [STEPS]
-#   STEPS defaults to 200.
+# Usage:  bash train_parallel.sh [STEPS]   (STEPS defaults to 200)
 #
 # Prereq: run `python run_experiment.py --step data --shortcut` once first so the
-# cohorts AND the held-out eval_set.json exist (single-process, avoids any race).
+# cohorts AND held-out eval_set.json exist (single-process, avoids any race).
 set -euo pipefail
 
 STEPS="${1:-200}"
@@ -17,22 +18,29 @@ if [ ! -f results/cohorts/eval_set.json ]; then
   exit 1
 fi
 
-echo "Launching 3 cohorts in parallel ($STEPS steps each), one per GPU..."
+# Count visible GPUs
+NGPU=$(python -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 1)
+echo "Detected $NGPU GPU(s). Training 3 cohorts ($STEPS steps each)."
+mkdir -p results
 
-CUDA_VISIBLE_DEVICES=0 python run_experiment.py --step train --cohort easy     --steps "$STEPS" > results/train_easy.log     2>&1 &
-PID_EASY=$!
-CUDA_VISIBLE_DEVICES=1 python run_experiment.py --step train --cohort frontier --steps "$STEPS" > results/train_frontier.log 2>&1 &
-PID_FRONTIER=$!
-CUDA_VISIBLE_DEVICES=2 python run_experiment.py --step train --cohort hard     --steps "$STEPS" > results/train_hard.log     2>&1 &
-PID_HARD=$!
+run() {  # run <gpu_id> <cohort>
+  CUDA_VISIBLE_DEVICES="$1" python run_experiment.py --step train --cohort "$2" --steps "$STEPS" \
+    > "results/train_$2.log" 2>&1
+}
 
-echo "  easy     -> GPU0 (pid $PID_EASY)     log: results/train_easy.log"
-echo "  frontier -> GPU1 (pid $PID_FRONTIER) log: results/train_frontier.log"
-echo "  hard     -> GPU2 (pid $PID_HARD)     log: results/train_hard.log"
-echo "Tail a log with:  tail -f results/train_frontier.log"
+if [ "$NGPU" -ge 3 ]; then
+  run 0 easy & run 1 frontier & run 2 hard & wait
+elif [ "$NGPU" -eq 2 ]; then
+  echo "Wave 1: frontier->GPU0, hard->GPU1 (logs: results/train_frontier.log, train_hard.log)"
+  run 0 frontier & run 1 hard & wait
+  echo "Wave 2: easy->GPU0 (log: results/train_easy.log)"
+  run 0 easy
+else
+  for c in frontier hard easy; do echo "Training $c (log: results/train_$c.log)"; run 0 "$c"; done
+fi
 
-wait $PID_EASY $PID_FRONTIER $PID_HARD
-echo "All three cohorts finished. Lift results:"
+echo "All cohorts finished. Lift results:"
 for c in easy frontier hard; do
-  echo "  $c: $(cat results/grpo/$c/lift_result.json 2>/dev/null | python -c 'import sys,json; d=json.load(sys.stdin); print(f"baseline={d[\"baseline_accuracy\"]:.1%} post={d[\"post_training_accuracy\"]:.1%} lift={d[\"actual_lift\"]:+.1%}")' 2>/dev/null || echo 'no result')"
+  printf "  %-9s " "$c"
+  python -c "import json;d=json.load(open('results/grpo/$c/lift_result.json'));print(f'baseline={d[\"baseline_accuracy\"]:.1%} post={d[\"post_training_accuracy\"]:.1%} lift={d[\"actual_lift\"]:+.1%}')" 2>/dev/null || echo "no result"
 done
