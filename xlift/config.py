@@ -14,7 +14,7 @@ except ImportError:
 @dataclass
 class Config:
     model_path: str = field(default_factory=lambda: os.environ.get(
-        "XLIFT_MODEL", "./models/qwen2.5-0.5b-instruct"
+        "XLIFT_MODEL", "./models/qwen2.5-1.5b-instruct"
     ))
     artifacts_dir: str = field(default_factory=lambda: os.environ.get(
         "XLIFT_ARTIFACTS", "./artifacts"

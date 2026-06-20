@@ -8,7 +8,7 @@ It's a lightweight pre-training probe: run model rollouts on candidate data, mea
 **Hackathon:** Anthropic/Etched/Cognition/Mercor — 24 hours, $50k top prize, $100k+ total.
 **Track:** Talent Marketplace + Applied AI — "systems that judge capability of a model."
 **Judges:** Founders from Etched, Cognition, Prime Intellect, Mercor + guests from frontier labs.
-**Compute:** 8x H100s per team (Prime Intellect). Use `Qwen/Qwen2.5-0.5B-Instruct` as base model.
+**Compute:** 8x H100s per team (Prime Intellect). Use `Qwen/Qwen2.5-1.5B-Instruct` as base model.
 
 ---
 
@@ -87,7 +87,7 @@ python run_experiment.py --step status
 
 - **Rollouts / metrics:** `claude-haiku-4-5-20251001` (fast, cheap)
 - **GEPA reflection + mutation:** `claude-sonnet-4-6` (smarter reasoning)
-- **GRPO base model:** `Qwen/Qwen2.5-0.5B-Instruct` (fits on H100, fast to train)
+- **GRPO base model:** `Qwen/Qwen2.5-1.5B-Instruct` (fits on H100, fast to train)
 - **Eval benchmark:** GSM8K test split (held-out, never in training cohorts)
 
 ---

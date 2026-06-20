@@ -28,7 +28,7 @@ def run_sweep(
 ) -> None:
     """Queue cohort training jobs across available GPUs.
 
-    - 1 GPU per job (0.5B model colocated)
+    - 1 GPU per job (1.5B model colocated)
     - Concurrency cap = n_gpus
     - Resumable: skips cohorts whose final checkpoint already exists
     - Order: C2, C1 first (POC gate), then C3-C5, C7, then C6 last

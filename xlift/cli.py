@@ -25,7 +25,7 @@ def setup():
     else:
         typer.echo(f"⚠ Model not found at {cfg.model_path}")
         typer.echo("Download with:")
-        typer.echo(f"  huggingface-cli download Qwen/Qwen2.5-0.5B-Instruct --local-dir {cfg.model_path}")
+        typer.echo(f"  huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct --local-dir {cfg.model_path}")
 
     if os.environ.get("ANTHROPIC_API_KEY"):
         typer.echo("✓ ANTHROPIC_API_KEY set")
