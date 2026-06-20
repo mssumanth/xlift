@@ -47,6 +47,7 @@ for c in frontier easy hard; do
       >> "results/overnight/metrics_$c.log" 2>&1
   rc=$?
   if [ $rc -eq 0 ]; then log "  metrics: $c DONE"; else log "  metrics: $c FAILED (rc=$rc) — see results/overnight/metrics_$c.log"; fi
+  bash save_results.sh "results: metrics $c" >> "$RUN_LOG" 2>&1   # loss-proof after each cohort
 done
 
 # --- STEP 3: training (auto-adapts to GPU count via train_parallel.sh) ---
@@ -54,6 +55,7 @@ log ">>> STEP 3: training (train_parallel.sh, $STEPS steps/cohort)"
 bash train_parallel.sh "$STEPS" >> "results/overnight/train.log" 2>&1
 rc=$?
 if [ $rc -eq 0 ]; then log "  training DONE"; else log "  training FAILED/partial (rc=$rc) — see results/overnight/train.log and results/train_*.log"; fi
+bash save_results.sh "results: training done" >> "$RUN_LOG" 2>&1
 
 # --- STEP 4: plots (only useful if at least metrics + some training landed) ---
 log ">>> STEP 4: visualize"
@@ -66,6 +68,7 @@ log ">>> Building dashboard"
 "$PY" eval/dashboard.py >> "results/overnight/dashboard.log" 2>&1 \
   && log "  dashboard DONE -> results/dashboard.html" \
   || log "  dashboard FAILED — see results/overnight/dashboard.log"
+bash save_results.sh "results: final (metrics+train+dashboard)" >> "$RUN_LOG" 2>&1
 
 # --- Morning summary ---
 log "================ SUMMARY ================"

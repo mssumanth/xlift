@@ -9,8 +9,10 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Results (large data files)
+# Results (large data files) — note: save_results.sh force-adds the lightweight
+# JSON/plots/dashboard with `git add -f`, but never the model checkpoints.
 results/
+results_bundle.tar.gz
 
 # IDE
 .idea/
