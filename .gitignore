@@ -15,5 +15,11 @@ results/
 # IDE
 .idea/
 
+# Slides build artifacts
+slides/node_modules/
+slides/package-lock.json
+slides/*.pdf
+slides/slide-*.jpg
+
 # OS
 .DS_Store
