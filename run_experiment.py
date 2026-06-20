@@ -11,8 +11,11 @@ Usage:
   # Step 1 only — create cohorts fast using difficulty labels
   python run_experiment.py --step data --shortcut
 
-  # Step 2 — compute xLift metrics on saved cohorts
-  python run_experiment.py --step metrics
+  # SMOKE — 2-min Qwen validation before the full run (do this first on a new box)
+  XLIFT_BACKEND=qwen python run_experiment.py --step metrics --smoke
+
+  # Step 2 — compute xLift metrics on saved cohorts (Qwen on GPU for valid signal)
+  XLIFT_BACKEND=qwen python run_experiment.py --step metrics
 
   # Step 3 — run GRPO (do this on H100 machine)
   python run_experiment.py --step train --cohort frontier
@@ -194,7 +197,19 @@ if __name__ == "__main__":
     parser.add_argument("--gepa-gens",   type=int, default=3)
     parser.add_argument("--steps",        type=int, default=200,
                         help="GRPO training steps")
+    parser.add_argument("--smoke", action="store_true",
+                        help="Tiny validation run (3 tasks, 2 rollouts, 1 GEPA gen). "
+                             "Use first on a new box to confirm the backend works before the full run.")
     args = parser.parse_args()
+
+    if args.smoke:
+        args.max_tasks = 3
+        args.rollouts = 2
+        args.gepa_gens = 1
+        if args.cohort == "all":
+            args.cohort = "frontier"
+        print(f"[smoke] tiny run: cohort={args.cohort}, max_tasks=3, rollouts=2, gepa_gens=1, "
+              f"backend={os.environ.get('XLIFT_BACKEND', 'claude')}")
 
     if args.step == "status":
         print_summary()
