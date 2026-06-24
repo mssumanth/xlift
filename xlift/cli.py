@@ -167,8 +167,11 @@ def cohorts():
 
 
 @app.command()
-def metrics(cohort_names: str = typer.Option("all", help="Comma-separated cohort names or 'all'")):
-    """Compute all cheap metrics from foundation rollouts."""
+def metrics(
+    cohort_names: str = typer.Option("all", help="Comma-separated cohort names or 'all'"),
+    force: bool = typer.Option(False, help="Recompute even if metrics already exist"),
+):
+    """Compute all cheap metrics from foundation rollouts. Idempotent by default."""
     from dotenv import load_dotenv
     load_dotenv()
     cfg = _cfg()
@@ -196,7 +199,7 @@ def metrics(cohort_names: str = typer.Option("all", help="Comma-separated cohort
         typer.echo(f"Computing metrics for {name}...")
         try:
             cohort, _ = load_cohort(name, cfg)
-            m = compute_cohort_metrics(cohort, foundation, embedder, test_questions, cfg)
+            m = compute_cohort_metrics(cohort, foundation, embedder, test_questions, cfg, force=force)
             typer.echo(f"  frontier_score={m.frontier_score:.3f}, effective_ratio={m.effective_ratio:.3f}")
         except Exception as e:
             typer.echo(f"  ERROR: {e}", err=True)

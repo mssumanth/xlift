@@ -60,6 +60,12 @@ cohorts:
 metrics:
 	$(CLI) metrics --cohort-names all
 
+metrics-force:
+	$(CLI) metrics --cohort-names all --force
+
+metrics-one:
+	$(CLI) metrics --cohort-names "$(COHORTS)"
+
 train:
 	$(CLI) train --cohort-names "$(COHORTS)" --gpus "$(GPUS)"
 

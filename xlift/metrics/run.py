@@ -17,12 +17,22 @@ def compute_cohort_metrics(
     embedder,
     test_questions: list[str],
     cfg,
+    force: bool = False,
 ) -> CohortMetrics:
     """Compute all cheap signals for a cohort from foundation rollouts.
 
     Pure function of the foundation rollout artifacts — no model loaded here.
     For C6 (verifier='weak'), all metrics that take reward= use 'weak'.
+    Idempotent: skips recompute if .metrics.json already exists unless force=True.
     """
+    artifacts = Path(cfg.artifacts_dir)
+    out_path = artifacts / "cohorts" / f"{cohort.name}.metrics.json"
+    if not force and out_path.exists():
+        print(f"Metrics already exist for {cohort.name}, skipping (use --force to recompute)")
+        with open(out_path) as f:
+            d = json.load(f)
+        return CohortMetrics(**d)
+
     task_id_set = set(cohort.task_ids)
     records = [r for r in foundation if r.task_id in task_id_set]
     reward = cohort.verifier
@@ -61,8 +71,6 @@ def compute_cohort_metrics(
     )
 
     # Write artifact
-    artifacts = Path(cfg.artifacts_dir)
-    out_path = artifacts / "cohorts" / f"{cohort.name}.metrics.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         d = metrics.__dict__.copy()
